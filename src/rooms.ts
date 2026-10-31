@@ -27,16 +27,17 @@ export type Equip = {
   size?: { w: number; h: number } | null;         // symbol size in feet (null = the type's default)
 };
 type EquipDefaults = Omit<Equip, 'id' | 'tag' | 'type' | 'pos' | 'rot' | 'size'>;
-export type EquipType = { type: string; prefix: string; color: string; size: { w: number; h: number }; defaults: EquipDefaults };
+// primary: an AHU-fed terminal unit, so its airflow counts as primary air.
+export type EquipType = { type: string; prefix: string; color: string; size: { w: number; h: number }; primary?: boolean; defaults: EquipDefaults };
 const AIR: EquipDefaults = { method: 'air', cools: true, coolCfm: 0, coolLat: 55, coolCap: 0, heats: true, heatCfm: 0, heatLat: 90, heatEat: 55, heatCap: 0, oaPct: 100 };
 export const OA_DIFFUSER = 'OA Diffuser';
 export const EQUIP_TYPES: EquipType[] = [
-  { type: 'VAV w/ Reheat', prefix: 'VAV', color: '#2563eb', size: { w: 4, h: 2 }, defaults: { ...AIR } },
-  { type: 'VAV (cooling only)', prefix: 'VAV', color: '#0284c7', size: { w: 4, h: 2 }, defaults: { ...AIR, heats: false } },
+  { type: 'VAV w/ Reheat', prefix: 'VAV', color: '#2563eb', size: { w: 4, h: 2 }, primary: true, defaults: { ...AIR } },
+  { type: 'VAV (cooling only)', prefix: 'VAV', color: '#0284c7', size: { w: 4, h: 2 }, primary: true, defaults: { ...AIR, heats: false } },
   { type: 'Fan Coil', prefix: 'FCU', color: '#7c3aed', size: { w: 4, h: 2.5 }, defaults: { ...AIR, heatLat: 95, heatEat: 70, oaPct: 0 } },
   { type: OA_DIFFUSER, prefix: 'OA', color: '#16a34a', size: { w: 2, h: 2 }, defaults: { ...AIR, method: 'oa', heats: false, coolLat: 55, heatLat: 65, oaPct: 100 } },
   { type: 'Split / DX', prefix: 'AC', color: '#0891b2', size: { w: 3, h: 1 }, defaults: { ...AIR, heats: false, oaPct: 0 } },
-  { type: 'CAV w/ Reheat', prefix: 'CAV', color: '#1d4ed8', size: { w: 4, h: 2 }, defaults: { ...AIR } },
+  { type: 'CAV w/ Reheat', prefix: 'CAV', color: '#1d4ed8', size: { w: 4, h: 2 }, primary: true, defaults: { ...AIR } },
   { type: 'Unit Heater', prefix: 'UH', color: '#dc2626', size: { w: 2, h: 2 }, defaults: { ...AIR, cools: false, heatLat: 100, heatEat: 65, oaPct: 0 } },
   { type: 'Baseboard / Radiant', prefix: 'BB', color: '#ea580c', size: { w: 6, h: 0.75 }, defaults: { ...AIR, method: 'capacity', cools: false, oaPct: 0 } },
   { type: 'Other (rated capacity)', prefix: 'EQ', color: '#64748b', size: { w: 2, h: 2 }, defaults: { ...AIR, method: 'capacity', oaPct: 0 } },
@@ -97,6 +98,10 @@ export const sensibleFactor = (altitudeFt: number) => 1.08 * Math.pow(1 - 6.8754
 // Orifice flow through leakage paths (door undercuts, cracks): Q = 2610 · A(ft²) · √ΔP(in.wg), Cd ≈ 0.65.
 export const ORIFICE_K = 2610;
 
+// Lighting / equipment / other, from the load's name ("Lighting", "Lights", "Plug loads", "Equipment"...).
+export type LoadCategory = 'lighting' | 'equipment' | 'other';
+export const loadCategory = (name: string): LoadCategory =>
+  /light|lamp|lumin/i.test(name) ? 'lighting' : /equip|plug|recept|computer|misc|appliance|process/i.test(name) ? 'equipment' : 'other';
 // Convert a load to watts. Per-SF units need the net area (null if uncalibrated).
 export function loadToW(value: number, unit: LoadUnit, area: number | null): number | null {
   switch (unit) {
@@ -156,8 +161,12 @@ export type EquipResult = { cool: number; heatToRoom: number; coil: number; oa: 
 export type Metrics = {
   area: number | null; gross: number | null; cutouts: number | null; volume: number | null;
   occupants: number | null; vbz: number | null; voz: number | null;
-  loadW: (number | null)[]; totalW: number | null;
-  // Airflow and outdoor air delivered by the room's equipment
+  loadW: (number | null)[]; totalW: number | null; perimeter: number | null;
+  lightW: number | null; equipW: number | null; otherW: number | null;
+  // Airflow and outdoor air delivered by the room's equipment.
+  // primaryAir: VAV/CAV boxes (max), primaryAirMin: their minimum (heating) airflow,
+  // unitAir: fan coils, splits, unit heaters, oaDiffAir: dedicated OA diffusers.
+  primaryAir: number; primaryAirMin: number; unitAir: number; oaDiffAir: number;
   supply: number; oa: number; achSupply: number | null; oaShort: boolean;
   // Heating & cooling (BTU/h)
   factor: number; coolingLoad: number | null; peopleBtuh: number | null; heatingLoad: number | null;
@@ -174,6 +183,8 @@ export function metrics(r: Room, feetPerPoint: number | null, altitudeFt = 0): M
   const voz = vbz === null ? null : vbz / (r.ez || 1);
   const loadW = r.loads.map(l => loadToW(l.value, l.unit, area));
   const totalW = loadW.some(w => w === null) ? null : loadW.reduce<number>((t, w) => t + (w ?? 0), 0);
+  const byCat = (c: LoadCategory) => { const ws = r.loads.map((l, i) => loadCategory(l.name) === c ? loadW[i] : 0); return ws.some(w => w === null) ? null : ws.reduce<number>((t, w) => t + (w ?? 0), 0); };
+  const perimeter = feetPerPoint === null ? null : r.points.reduce((t, p, i) => { const q = r.points[(i + 1) % r.points.length]; return t + Math.hypot(q.x - p.x, q.y - p.y); }, 0) * feetPerPoint;
 
   // Heating & cooling. Cooling = sensible internal loads + people; heating load is entered.
   const factor = sensibleFactor(altitudeFt);
@@ -202,13 +213,22 @@ export function metrics(r: Room, feetPerPoint: number | null, altitudeFt = 0): M
   const sum = (f: (x: EquipResult) => number) => equip.reduce((t, x) => t + f(x), 0);
   const coolCap = sum(x => x.cool), heatCap = sum(x => x.heatToRoom), coilTotal = sum(x => x.coil);
   const supply = sum(x => x.supply), oa = sum(x => x.oa);
+  let primaryAir = 0, primaryAirMin = 0, unitAir = 0, oaDiffAir = 0;
+  r.equipment.forEach(e => {
+    const q = equipSupply(e);
+    if (e.method === 'oa') oaDiffAir += q;
+    else if (equipType(e.type).primary) { primaryAir += q; primaryAirMin += e.cools && e.heats && e.heatCfm > 0 ? Math.min(e.coolCfm, e.heatCfm) : q; }
+    else unitAir += q;
+  });
   const equipCoolCfm = r.equipment.reduce((t, e) => t + (e.method !== 'capacity' && e.cools ? e.coolCfm : 0), 0);
   const firstAir = r.equipment.find(e => e.method === 'air' && e.cools);
   const designLat = firstAir ? firstAir.coolLat : 55;
   const dT = r.coolSetpoint - designLat;
   const cfmNeeded = coolingLoad === null || dT <= 0 ? null : coolingLoad / (factor * dT);
   return {
-    area, gross, cutouts, volume, occupants, vbz, voz, loadW, totalW,
+    area, gross, cutouts, volume, occupants, vbz, voz, loadW, totalW, perimeter,
+    lightW: byCat('lighting'), equipW: byCat('equipment'), otherW: byCat('other'),
+    primaryAir, primaryAirMin, unitAir, oaDiffAir,
     supply, oa, achSupply: volume ? supply * 60 / volume : null,
     oaShort: voz !== null && voz > 0 && oa < voz - 0.05,
     factor, coolingLoad, peopleBtuh, heatingLoad, equip, coolCap, heatCap, coilTotal, equipCoolCfm,
@@ -219,6 +239,7 @@ export function metrics(r: Room, feetPerPoint: number | null, altitudeFt = 0): M
   };
 }
 export const roomHasIssue = (m: Metrics) => m.oaShort || m.coolingShort || m.heatingShort;
+export const roomIssues = (m: Metrics) => [m.oaShort && 'OA short', m.coolingShort && 'Cooling short', m.heatingShort && 'Heating short'].filter(Boolean).join(', ');
 export const fmtPressure = (inwg: number | null, unit: PressureUnit) => inwg === null ? '—'
   : unit === 'Pa' ? `${(inwg * PA_PER_INWG).toFixed(1)} Pa` : `${inwg.toFixed(3)} in.wg`;
 
@@ -282,44 +303,76 @@ export type Column = {
   get: (r: Room, m: Metrics, ctx: CellCtx) => number | string | null;
   dec?: number; sum?: boolean; flag?: (r: Room, m: Metrics) => boolean;
 };
+const perSF = (v: number | null, a: number | null) => v === null || !a ? null : v / a;
+const occText = (r: Room) => `${tidy(r.occupancy.value)} ${OCC_UNITS.find(u => u[0] === r.occupancy.unit)![1]}`;
 export const COLUMNS: Column[] = [
+  // Room
   { id: 'name', label: 'Room', group: 'Room', get: r => r.name },
   { id: 'template', label: 'Template', group: 'Room', get: (r, _m, c) => c.tpl(r.template) },
   { id: 'gross', label: 'Gross SF', group: 'Room', get: (_r, m) => m.gross, sum: true },
   { id: 'cutouts', label: 'Cutouts SF', group: 'Room', get: (_r, m) => m.cutouts, sum: true },
   { id: 'area', label: 'SF', group: 'Room', get: (_r, m) => m.area, sum: true },
+  { id: 'perimeter', label: 'Perimeter (LF)', group: 'Room', get: (_r, m) => m.perimeter, sum: true },
   { id: 'height', label: 'Ceiling Height (ft)', group: 'Room', get: r => r.height },
   { id: 'volume', label: 'Volume (CF)', group: 'Room', get: (_r, m) => m.volume, dec: 0, sum: true },
+  { id: 'coolSet', label: 'Cooling Setpoint (°F)', group: 'Room', get: r => r.coolSetpoint },
+  { id: 'heatSet', label: 'Heating Setpoint (°F)', group: 'Room', get: r => r.heatSetpoint },
+  { id: 'status', label: 'Status', group: 'Room', get: (_r, m) => roomIssues(m) || 'OK', flag: (_r, m) => roomHasIssue(m) },
+  // Ventilation
+  { id: 'occInput', label: 'Occupancy (as entered)', group: 'Ventilation', get: occText },
   { id: 'people', label: 'People', group: 'Ventilation', get: (_r, m) => m.occupants, sum: true },
+  { id: 'density', label: 'People / 1000 SF', group: 'Ventilation', get: (_r, m) => m.occupants === null || !m.area ? null : m.occupants / m.area * 1000 },
   { id: 'rp', label: 'cfm/person', group: 'Ventilation', get: r => r.rp, dec: 2 },
   { id: 'ra', label: 'cfm/SF', group: 'Ventilation', get: r => r.ra, dec: 2 },
   { id: 'ez', label: 'Ez', group: 'Ventilation', get: r => r.ez, dec: 2 },
   { id: 'vbz', label: 'Vbz (cfm)', group: 'Ventilation', get: (_r, m) => m.vbz, dec: 0, sum: true },
   { id: 'reqOA', label: 'Required OA (cfm)', group: 'Ventilation', get: (_r, m) => m.voz, dec: 0, sum: true },
   { id: 'provOA', label: 'Provided OA (cfm)', group: 'Ventilation', get: (_r, m) => m.oa, dec: 0, sum: true, flag: (_r, m) => m.oaShort },
-  { id: 'supply', label: 'Supply (cfm)', group: 'Ventilation', get: (_r, m) => m.supply, dec: 0, sum: true },
-  { id: 'supplySF', label: 'Supply cfm/SF', group: 'Ventilation', get: (_r, m) => m.area ? m.supply / m.area : null, dec: 2 },
-  { id: 'achSupply', label: 'ACH Supply', group: 'Ventilation', get: (_r, m) => m.achSupply },
+  { id: 'oaMargin', label: 'OA Margin (cfm)', group: 'Ventilation', get: (_r, m) => m.voz === null ? null : m.oa - m.voz, dec: 0, sum: true, flag: (_r, m) => m.oaShort },
+  { id: 'oaPerPerson', label: 'Provided OA cfm/person', group: 'Ventilation', get: (_r, m) => m.occupants ? m.oa / m.occupants : null },
+  // Loads
+  { id: 'lightW', label: 'Lighting (W)', group: 'Loads', get: (_r, m) => m.lightW, dec: 0, sum: true },
+  { id: 'lightWSF', label: 'Lighting (W/SF)', group: 'Loads', get: (_r, m) => perSF(m.lightW, m.area), dec: 2 },
+  { id: 'equipW', label: 'Equipment (W)', group: 'Loads', get: (_r, m) => m.equipW, dec: 0, sum: true },
+  { id: 'equipWSF', label: 'Equipment (W/SF)', group: 'Loads', get: (_r, m) => perSF(m.equipW, m.area), dec: 2 },
+  { id: 'otherW', label: 'Other Loads (W)', group: 'Loads', get: (_r, m) => m.otherW, dec: 0, sum: true },
   { id: 'loadW', label: 'Internal Load (W)', group: 'Loads', get: (_r, m) => m.totalW, dec: 0, sum: true },
+  { id: 'loadDensity', label: 'Internal Load (W/SF)', group: 'Loads', get: (_r, m) => perSF(m.totalW, m.area), dec: 2 },
   { id: 'loadBtu', label: 'Internal Load (BTU/h)', group: 'Loads', get: (_r, m) => m.totalW === null ? null : m.totalW * BTUH_PER_W, dec: 0, sum: true },
-  { id: 'loadDensity', label: 'Load (W/SF)', group: 'Loads', get: (_r, m) => m.totalW === null || !m.area ? null : m.totalW / m.area, dec: 2 },
+  { id: 'peopleSens', label: 'People Sensible (BTU/h·person)', group: 'Loads', get: r => r.peopleSensible, dec: 0 },
+  { id: 'peopleBtu', label: 'People Load (BTU/h)', group: 'Loads', get: (_r, m) => m.peopleBtuh, dec: 0, sum: true },
+  { id: 'loadBreakdown', label: 'Load Breakdown', group: 'Loads', get: r => r.loads.map(l => `${l.name}: ${tidy(l.value)} ${l.unit}`).join('; ') || null },
+  // Mechanical equipment
   { id: 'equipment', label: 'Equipment', group: 'Mechanical Equipment', get: r => r.equipment.map(e => e.tag || e.type).join(', ') || null },
+  { id: 'equipCount', label: 'Units', group: 'Mechanical Equipment', get: r => r.equipment.length, dec: 0, sum: true },
+  { id: 'primaryAir', label: 'Primary Air (cfm)', group: 'Mechanical Equipment', get: (_r, m) => m.primaryAir, dec: 0, sum: true },
+  { id: 'primaryAirMin', label: 'Primary Air Min (cfm)', group: 'Mechanical Equipment', get: (_r, m) => m.primaryAirMin, dec: 0, sum: true },
+  { id: 'unitAir', label: 'Fan Coil / Unit Air (cfm)', group: 'Mechanical Equipment', get: (_r, m) => m.unitAir, dec: 0, sum: true },
+  { id: 'oaDiffAir', label: 'OA Diffuser Air (cfm)', group: 'Mechanical Equipment', get: (_r, m) => m.oaDiffAir, dec: 0, sum: true },
+  { id: 'supply', label: 'Total Supply (cfm)', group: 'Mechanical Equipment', get: (_r, m) => m.supply, dec: 0, sum: true },
+  { id: 'supplySF', label: 'Supply cfm/SF', group: 'Mechanical Equipment', get: (_r, m) => perSF(m.supply, m.area), dec: 2 },
+  { id: 'achSupply', label: 'ACH Supply', group: 'Mechanical Equipment', get: (_r, m) => m.achSupply },
   { id: 'coolLoad', label: 'Cooling Load (BTU/h)', group: 'Mechanical Equipment', get: (_r, m) => m.coolingLoad, dec: 0, sum: true },
   { id: 'coolCap', label: 'Cooling Capacity (BTU/h)', group: 'Mechanical Equipment', get: (_r, m) => m.coolCap, dec: 0, sum: true, flag: (_r, m) => m.coolingShort },
+  { id: 'coolMargin', label: 'Cooling Margin (BTU/h)', group: 'Mechanical Equipment', get: (_r, m) => m.coolingLoad === null ? null : m.coolCap - m.coolingLoad, dec: 0, sum: true, flag: (_r, m) => m.coolingShort },
+  { id: 'coolTons', label: 'Cooling Capacity (tons)', group: 'Mechanical Equipment', get: (_r, m) => m.coolCap / 12000, dec: 2, sum: true },
   { id: 'equipCfm', label: 'Cooling cfm', group: 'Mechanical Equipment', get: (_r, m) => m.equipCoolCfm, dec: 0, sum: true, flag: (_r, m) => m.coolingShort },
   { id: 'cfmNeeded', label: 'Cooling cfm Required', group: 'Mechanical Equipment', get: (_r, m) => m.cfmNeeded, dec: 0, sum: true },
   { id: 'heatLoad', label: 'Heating Load (BTU/h)', group: 'Mechanical Equipment', get: (_r, m) => m.heatingLoad, dec: 0, sum: true },
   { id: 'heatCap', label: 'Heating Capacity (BTU/h)', group: 'Mechanical Equipment', get: (_r, m) => m.heatCap, dec: 0, sum: true, flag: (_r, m) => m.heatingShort },
+  { id: 'heatMargin', label: 'Heating Margin (BTU/h)', group: 'Mechanical Equipment', get: (_r, m) => m.heatingLoad === null ? null : m.heatCap - m.heatingLoad, dec: 0, sum: true, flag: (_r, m) => m.heatingShort },
   { id: 'coil', label: 'Heating Coil (MBH)', group: 'Mechanical Equipment', get: (_r, m) => m.coilTotal / 1000, dec: 1, sum: true },
+  { id: 'coilKw', label: 'Heating Coil (kW)', group: 'Mechanical Equipment', get: (_r, m) => m.coilTotal / BTUH_PER_W / 1000, dec: 1, sum: true },
 ];
 export const COLUMN_BY_ID = new Map(COLUMNS.map(c => [c.id, c]));
 
 export type ReportTemplate = { id: string; name: string; columns: string[]; builtin?: boolean };
 export const BUILTIN_REPORTS: ReportTemplate[] = [
-  { id: 'ventilation', name: 'Ventilation', builtin: true, columns: ['name', 'area', 'height', 'volume', 'people', 'rp', 'ra', 'reqOA', 'provOA', 'supply', 'achSupply'] },
-  { id: 'hvac', name: 'Mechanical Equipment', builtin: true, columns: ['name', 'area', 'equipment', 'coolLoad', 'coolCap', 'equipCfm', 'cfmNeeded', 'heatLoad', 'heatCap', 'coil'] },
-  { id: 'loads', name: 'Loads', builtin: true, columns: ['name', 'template', 'area', 'loadW', 'loadDensity', 'loadBtu'] },
-  { id: 'schedule', name: 'Room Schedule', builtin: true, columns: ['name', 'template', 'gross', 'cutouts', 'area', 'height', 'volume'] },
+  { id: 'ventilation', name: 'Ventilation', builtin: true, columns: ['name', 'area', 'height', 'volume', 'people', 'rp', 'ra', 'reqOA', 'provOA', 'oaMargin', 'primaryAir', 'achSupply'] },
+  { id: 'hvac', name: 'Mechanical Equipment', builtin: true, columns: ['name', 'area', 'equipment', 'primaryAir', 'primaryAirMin', 'unitAir', 'oaDiffAir', 'coolLoad', 'coolCap', 'heatLoad', 'heatCap', 'coil'] },
+  { id: 'loads', name: 'Loads', builtin: true, columns: ['name', 'area', 'lightWSF', 'lightW', 'equipWSF', 'equipW', 'otherW', 'loadW', 'loadDensity', 'peopleBtu', 'coolLoad'] },
+  { id: 'schedule', name: 'Room Schedule', builtin: true, columns: ['name', 'template', 'gross', 'cutouts', 'area', 'perimeter', 'height', 'volume'] },
+  { id: 'roomdata', name: 'Room Data Summary', builtin: true, columns: ['name', 'template', 'area', 'volume', 'people', 'reqOA', 'provOA', 'lightWSF', 'equipWSF', 'coolLoad', 'coolCap', 'heatLoad', 'heatCap', 'primaryAir', 'status'] },
 ];
 export const formatCell = (v: number | string | null, dec = 1) =>
   v === null ? '—' : typeof v === 'string' ? v : v.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: dec });

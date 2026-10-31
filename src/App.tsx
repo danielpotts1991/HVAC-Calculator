@@ -64,7 +64,9 @@ const DEFAULT_SHORTCUTS = Object.fromEntries(ACTIONS.map(a => [a.id, a.key])) as
 // Keys with fixed meanings that can't be reassigned.
 const RESERVED_KEYS = ['escape', 'enter', 'backspace', 'delete', 'tab', ' ', 'arrowup', 'arrowdown', 'arrowleft', 'arrowright', 'shift', 'control', 'alt', 'meta'];
 const keyLabel = (k: string) => !k ? '—' : k.length === 1 ? k.toUpperCase() : k;
-type AppSettings = { shortcuts: Shortcuts; pdfOpacity: number; leftOpen: boolean; rightOpen: boolean; sections: Record<string, boolean>; roomTemplates: RoomTemplate[]; reports: ReportTemplate[] };
+type AppSettings = { shortcuts: Shortcuts; pdfOpacity: number; leftOpen: boolean; rightOpen: boolean; sections: Record<string, boolean>; roomTemplates: RoomTemplate[]; reports: ReportTemplate[];
+  equipStyle: Record<string, { color: string; opacity: number }> }; // per equipment type: symbol colour and fill opacity
+const DEFAULT_EQUIP_OPACITY = 0.15;
 const DEFAULT_SECTIONS: Record<string, boolean> = { drawing: false, wall: true, room: true, ashrae: true, airflow: true, loads: true, hvac: true };
 const SETTINGS_KEY = 'hvac-studio-settings';
 function loadSettings(): AppSettings {
@@ -72,8 +74,9 @@ function loadSettings(): AppSettings {
     const raw = JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}');
     return { shortcuts: { ...DEFAULT_SHORTCUTS, ...(raw.shortcuts || {}) }, pdfOpacity: typeof raw.pdfOpacity === 'number' ? raw.pdfOpacity : 1,
       leftOpen: raw.leftOpen ?? true, rightOpen: raw.rightOpen ?? true, sections: { ...DEFAULT_SECTIONS, ...(raw.sections || {}) },
-      roomTemplates: Array.isArray(raw.roomTemplates) ? raw.roomTemplates : [], reports: Array.isArray(raw.reports) ? raw.reports : [] };
-  } catch { return { shortcuts: { ...DEFAULT_SHORTCUTS }, pdfOpacity: 1, leftOpen: true, rightOpen: true, sections: { ...DEFAULT_SECTIONS }, roomTemplates: [], reports: [] }; }
+      roomTemplates: Array.isArray(raw.roomTemplates) ? raw.roomTemplates : [], reports: Array.isArray(raw.reports) ? raw.reports : [],
+      equipStyle: raw.equipStyle && typeof raw.equipStyle === 'object' ? raw.equipStyle : {} };
+  } catch { return { shortcuts: { ...DEFAULT_SHORTCUTS }, pdfOpacity: 1, leftOpen: true, rightOpen: true, sections: { ...DEFAULT_SECTIONS }, roomTemplates: [], reports: [], equipStyle: {} }; }
 }
 // True when the key press belongs to a text/number field rather than the app.
 const isTyping = (t: EventTarget | null) =>
@@ -242,23 +245,39 @@ function ringsOverlap(a: Point[], b: Point[]) {
 }
 // Move edge i of a ring along its own normal. Its two corners slide along the
 // neighbouring walls, so those walls keep their angles (they just get longer/shorter).
+function edgeNormal(ring: Point[], i: number): Point | null {
+  const a = ring[i], b = ring[(i + 1) % ring.length], len = dist(a, b);
+  return len < 1e-9 ? null : { x: -(b.y - a.y) / len, y: (b.x - a.x) / len };
+}
 function offsetEdge(ring: Point[], i: number, arrow: Point, step: number): Point[] | null {
+  const normal = edgeNormal(ring, i);
+  if (!normal) return null;
+  const along = arrow.x * normal.x + arrow.y * normal.y;
+  if (Math.abs(along) < 0.3) return null; // arrow points along the wall: nothing to nudge
+  return offsetEdgeBy(ring, i, step * Math.sign(along));
+}
+// Move edge i a signed distance along its normal; its corners slide along the neighbouring walls.
+function offsetEdgeBy(ring: Point[], i: number, distance: number): Point[] | null {
   const n = ring.length;
   const a = ring[i], b = ring[(i + 1) % n];
   const len = dist(a, b);
   if (len < 1e-9) return null;
   const d = { x: (b.x - a.x) / len, y: (b.y - a.y) / len };
   const normal = { x: -d.y, y: d.x };
-  const along = arrow.x * normal.x + arrow.y * normal.y;
-  if (Math.abs(along) < 0.3) return null; // arrow points along the wall: nothing to nudge
-  const off = { x: normal.x * step * Math.sign(along), y: normal.y * step * Math.sign(along) };
+  const off = { x: normal.x * distance, y: normal.y * distance };
   const a2 = { x: a.x + off.x, y: a.y + off.y }, b2 = { x: b.x + off.x, y: b.y + off.y };
   const prev = ring[(i - 1 + n) % n], next = ring[(i + 2) % n];
   const newA = segmentIntersection(prev, { x: a.x - prev.x, y: a.y - prev.y }, a2, d) ?? a2;
   const newB = segmentIntersection(next, { x: b.x - next.x, y: b.y - next.y }, b2, d) ?? b2;
+  // Refuse moves that run a neighbouring wall backwards past its far corner.
+  const fwd = (q: Point, from: Point, to: Point) => (q.x - from.x) * (to.x - from.x) + (q.y - from.y) * (to.y - from.y) > 1e-9;
+  if (!fwd(newA, prev, a) || !fwd(newB, next, b)) return null;
   const out = ring.map(p => ({ ...p }));
   out[i] = { x: newA.x, y: newA.y };
   out[(i + 1) % n] = { x: newB.x, y: newB.y };
+  // ...or that turn the shape inside out.
+  const signed = (r: Point[]) => r.reduce((t, p, k) => { const q = r[(k + 1) % r.length]; return t + p.x * q.y - q.x * p.y; }, 0);
+  if (Math.sign(signed(out)) !== Math.sign(signed(ring))) return null;
   return out;
 }
 // Label anchor: the sampled point inside the room's net area that is farthest from any
@@ -377,6 +396,7 @@ export default function App(){
   const [panning,setPanning]=useState(false);
   const setSelectedId=(id:string|null)=>{setSelectedIdRaw(id);setSelectedEdge(null);setLabelSel(false);setSelectedEquip(null);};
   // Label drag / resize in progress. history is pushed once, on the first real movement.
+  const edgeDragRef=useRef<{roomId:string;ring:number;index:number;startRing:Point[];start:Point;normal:Point;pushed:boolean;dist:number}|null>(null);
   const labelDragRef=useRef<{mode:'move'|'size';id:string;start:Point;startPos:Point;startSize:number;center:Point;pushed:boolean}|null>(null);
   const labelRefs=useRef(new Map<string,SVGTextElement>());
   const [labelBox,setLabelBox]=useState<{x:number;y:number;width:number;height:number}|null>(null);
@@ -384,6 +404,13 @@ export default function App(){
   const historyRef=useRef<Room[][]>([]);
   const pushHistory=()=>{historyRef.current.push(rooms);if(historyRef.current.length>200)historyRef.current.shift();};
   const [message,setMessage]=useState('Import a PDF to begin.');
+  // Sharp rendering: the base canvas holds the whole page at screen resolution (zoom 1);
+  // the detail canvas re-renders just the visible part at the current zoom once zooming/panning settles.
+  const pageRef=useRef<pdfjsLib.PDFPageProxy|null>(null);
+  const detailRef=useRef<HTMLCanvasElement>(null);
+  const detailTaskRef=useRef<{cancel:()=>void}|null>(null);
+  const detailTimerRef=useRef<ReturnType<typeof setTimeout>|null>(null);
+  const movingTimerRef=useRef<ReturnType<typeof setTimeout>|null>(null);
   const canvasRef=useRef<HTMLCanvasElement>(null),svgRef=useRef<SVGSVGElement>(null),fileRef=useRef<HTMLInputElement>(null),scrollRef=useRef<HTMLElement>(null);
   const panRef=useRef<{x:number;y:number;offsetX:number;offsetY:number}|null>(null);
   const offsetRef=useRef({x:20,y:20});
@@ -405,6 +432,7 @@ export default function App(){
   const findTemplate=(id?:string|null)=>id?allTemplates.find(t=>t.id===id):undefined;
   const templateName=(id?:string|null)=>findTemplate(id)?.name??'Custom';
   const mOf=(r:Room)=>metrics(r,feetPerPoint,altitudeFt);
+  const styleOf=(type:string)=>settings.equipStyle[type]??{color:equipType(type).color,opacity:DEFAULT_EQUIP_OPACITY};
   // The template picker follows the selected room.
   useEffect(()=>{setTplChoice(rooms.find(r=>r.id===selectedId)?.template??'');},[selectedId]); // eslint-disable-line react-hooks/exhaustive-deps
   function applyTemplateTo(room:Room,id:string){
@@ -445,6 +473,7 @@ export default function App(){
   useEffect(()=>{
     if(!pdf||!canvasRef.current)return;
     let cancelled=false;let task:ReturnType<pdfjsLib.PDFPageProxy['render']>|undefined;
+    pageRef.current=null;if(detailRef.current)detailRef.current.style.display='none';
     (async()=>{const page=await pdf.getPage(pageNumber);const vp=page.getViewport({scale:1});if(cancelled)return;
       setPageSize({width:vp.width,height:vp.height});const canvas=canvasRef.current;if(!canvas)return;
       const ratio=Math.min(window.devicePixelRatio||1,2);canvas.width=Math.round(vp.width*ratio);canvas.height=Math.round(vp.height*ratio);
@@ -452,9 +481,38 @@ export default function App(){
       const ctx=canvas.getContext('2d');if(!ctx)return;
       task=page.render({canvasContext:ctx,canvas,viewport:page.getViewport({scale:ratio})});
       try{await task.promise;}catch(e){if(!cancelled)console.error(e);}
+      if(!cancelled){pageRef.current=page;scheduleDetail();}
     })().catch(console.error);
     return()=>{cancelled=true;task?.cancel();};
-  },[pdf,pageNumber]);
+  },[pdf,pageNumber]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(()=>()=>{detailTaskRef.current?.cancel();if(detailTimerRef.current)clearTimeout(detailTimerRef.current);if(movingTimerRef.current)clearTimeout(movingTimerRef.current);},[]);
+  useEffect(()=>{const onResize=()=>scheduleDetail();window.addEventListener('resize',onResize);return()=>window.removeEventListener('resize',onResize);},[]); // eslint-disable-line react-hooks/exhaustive-deps
+  function scheduleDetail(){
+    if(detailTimerRef.current)clearTimeout(detailTimerRef.current);
+    detailTimerRef.current=setTimeout(()=>{detailTimerRef.current=null;void renderDetail();},160);
+  }
+  async function renderDetail(){
+    const page=pageRef.current,out=detailRef.current,view=scrollRef.current;if(!page||!out||!view)return;
+    const dpr=Math.min(window.devicePixelRatio||1,3),base=Math.min(window.devicePixelRatio||1,2),z=zoomRef.current;
+    if(z*dpr<=base*1.05){out.style.display='none';return;} // the base canvas is already sharp enough
+    const {x:ox,y:oy}=offsetRef.current,pvp=page.getViewport({scale:1}),pw=pvp.width,ph=pvp.height;
+    // Visible part of the page (page units) plus a margin so short pans stay sharp.
+    let x0=-ox/z,y0=-oy/z,x1=(view.clientWidth-ox)/z,y1=(view.clientHeight-oy)/z;
+    const mx=(x1-x0)*0.15,my=(y1-y0)*0.15;
+    x0=Math.max(0,x0-mx);y0=Math.max(0,y0-my);x1=Math.min(pw,x1+mx);y1=Math.min(ph,y1+my);
+    if(x1<=x0||y1<=y0){out.style.display='none';return;}
+    const w=x1-x0,h=y1-y0;
+    const sc=Math.min(z*dpr,Math.sqrt(24e6/(w*h)),16000/Math.max(w,h)); // keep the bitmap a sane size
+    const tmp=document.createElement('canvas');tmp.width=Math.ceil(w*sc);tmp.height=Math.ceil(h*sc);
+    const ctx=tmp.getContext('2d');if(!ctx)return;
+    detailTaskRef.current?.cancel();
+    const task=page.render({canvasContext:ctx,canvas:tmp,viewport:page.getViewport({scale:sc,offsetX:-x0*sc,offsetY:-y0*sc})});
+    detailTaskRef.current=task;
+    try{await task.promise;}catch{return;} // cancelled by a newer render
+    if(detailTaskRef.current!==task)return;
+    out.width=tmp.width;out.height=tmp.height;out.getContext('2d')?.drawImage(tmp,0,0);
+    Object.assign(out.style,{display:'block',left:`${x0}px`,top:`${y0}px`,width:`${w}px`,height:`${h}px`});
+  }
 
   const snapshot=JSON.stringify({pdfName,pageNumber,scale,customFeetPerPoint,altitudeFt,rooms});
   useEffect(()=>{
@@ -788,6 +846,18 @@ export default function App(){
   // preventDefault on a press also skips the browser's focus change, so release any focused field
   // ourselves; otherwise arrow keys / Delete would keep going to the last-edited input.
   const releaseFocus=()=>{const a=document.activeElement;if(a instanceof HTMLElement&&a!==document.body)a.blur();};
+  // Press on a wall: select it, and dragging moves it across itself (snaps to 1" when scaled).
+  function startEdgeDrag(e:ReactPointerEvent<SVGElement>,room:Room,ringIdx:number,index:number){
+    if(tool!=='select'||e.button!==0)return;
+    e.stopPropagation();e.preventDefault();releaseFocus();
+    setSelectedIdRaw(room.id);setSelectedEquip(null);setLabelSel(false);setSelectedEdge({ring:ringIdx,index});
+    const ring=ringIdx<0?room.points:cutoutsOf(room)[ringIdx],normal=ring?edgeNormal(ring,index):null;
+    if(!ring||!normal)return;
+    edgeDragRef.current={roomId:room.id,ring:ringIdx,index,startRing:ring.map(p=>({...p})),start:pointFromEvent(e as unknown as ReactPointerEvent<SVGSVGElement>),normal,pushed:false,dist:0};
+    svgRef.current?.setPointerCapture(e.pointerId);
+    setMessage(`${ringIdx<0?'Wall':'Cutout wall'} selected. Drag it, or use the arrow keys (1", Shift 1'-0").${ringIdx>=0?' Delete removes this cutout.':''}`);
+  }
+  const withRing=(room:Room,ringIdx:number,ring:Point[]):Room=>ringIdx<0?{...room,points:ring}:{...room,cutouts:cutoutsOf(room).map((c,k)=>k===ringIdx?ring:c)};
   function startLabelDrag(e:ReactPointerEvent<SVGElement>,room:Room,mode:'move'|'size'){
     if(tool!=='select'||e.button!==0)return;
     e.stopPropagation();e.preventDefault();releaseFocus();
@@ -800,6 +870,20 @@ export default function App(){
   }
   function onPointerMove(e:ReactPointerEvent<SVGSVGElement>){
     const p=pointFromEvent(e);setHover(p);
+    const wd=edgeDragRef.current;
+    if(wd){
+      let d=(p.x-wd.start.x)*wd.normal.x+(p.y-wd.start.y)*wd.normal.y;
+      if(!wd.pushed){if(Math.abs(d)*zoomRef.current<3)return;pushHistory();wd.pushed=true;}
+      const unit=feetPerPoint?1/12/feetPerPoint:1;d=Math.round(d/unit)*unit; // whole inches (points when unscaled)
+      if(d===wd.dist)return;
+      const room=rooms.find(r=>r.id===wd.roomId),moved=offsetEdgeBy(wd.startRing,wd.index,d);if(!room||!moved)return;
+      const next=withRing(room,wd.ring,moved);
+      if(!roomIsValid(next))return; // stop at the last valid position
+      wd.dist=d;setRooms(v=>v.map(r=>r.id===next.id?next:r));
+      const na=mOf(next).area;
+      setMessage(`Moving wall ${feetPerPoint?fmtFeet(Math.abs(d)*feetPerPoint):`${fmt(Math.abs(d))} pt`}${na!==null?` · ${next.name}: ${fmt(na)} SF`:''}`);
+      return;
+    }
     const ed=equipDragRef.current;
     if(ed){
       const dx=p.x-ed.start.x,dy=p.y-ed.start.y;
@@ -823,12 +907,19 @@ export default function App(){
     if(press.dragging)setRectEnd(p);
   }
   function onPointerCancel(){
+    const wd=edgeDragRef.current;
+    if(wd){edgeDragRef.current=null;if(wd.pushed)setRooms(v=>v.map(r=>r.id===wd.roomId?withRing(r,wd.ring,wd.startRing):r));}
     const ed=equipDragRef.current;
     if(ed){equipDragRef.current=null;setDropTarget(undefined);if(ed.pushed)updateEquipIn(ed.roomId,ed.id,{pos:ed.startPos});}
     labelDragRef.current=null;pressRef.current=null;
   }
   function onPointerUp(e:ReactPointerEvent<SVGSVGElement>){
     if(labelDragRef.current){labelDragRef.current=null;return;}
+    const wd=edgeDragRef.current;
+    if(wd){edgeDragRef.current=null;
+      if(wd.pushed){const r=rooms.find(x=>x.id===wd.roomId),a=r?mOf(r).area:null;
+        setMessage(`Wall moved ${feetPerPoint?fmtFeet(Math.abs(wd.dist)*feetPerPoint):`${fmt(Math.abs(wd.dist))} pt`}.${a!==null&&r?` ${r.name}: ${fmt(a)} SF.`:''} Ctrl/Cmd+Z to undo.`);}
+      return;}
     const ed=equipDragRef.current;
     if(ed){
       equipDragRef.current=null;setDropTarget(undefined);
@@ -859,7 +950,14 @@ export default function App(){
   // No scroll-position adjustments, no layout resizing, no React render per wheel event.
   function updateViewport(){
     const world=worldRef.current;
-    if(world)world.style.transform=`translate3d(${offsetRef.current.x}px, ${offsetRef.current.y}px, 0) scale(${zoomRef.current})`;
+    if(world){
+      world.style.transform=`translate3d(${offsetRef.current.x}px, ${offsetRef.current.y}px, 0) scale(${zoomRef.current})`;
+      // Composited layer only while moving; once idle the browser re-rasterizes labels and lines at full sharpness.
+      world.classList.add('moving');
+      if(movingTimerRef.current)clearTimeout(movingTimerRef.current);
+      movingTimerRef.current=setTimeout(()=>{world.classList.remove('moving');movingTimerRef.current=null;},180);
+    }
+    scheduleDetail();
   }
   function updateZoomLabel(){
     if(zoomLabelTimerRef.current!==null)clearTimeout(zoomLabelTimerRef.current);
@@ -975,8 +1073,9 @@ export default function App(){
       <main ref={scrollRef} className={`hvac-main${spaceHeld?' pan-ready':''}${panning?' panning':''}`} onWheel={onWheel} onPointerDownCapture={onPanDown} onPointerMoveCapture={onPanMove} onPointerUpCapture={endPan} onPointerCancelCapture={endPan} onAuxClick={e=>e.preventDefault()}>
         {!pdf?<div className="hvac-empty"><FileText size={54} strokeWidth={1.3}/><strong>Start with a floor plan</strong><span>Import a PDF, choose its scale, then trace inside wall faces.</span><button className="hvac-btn primary" onClick={()=>fileRef.current?.click()}>Choose PDF</button></div>:
           <div ref={sheetRef} className="hvac-sheet" style={{width:0,height:0,boxShadow:"none",background:"transparent"}}>
-            <div ref={worldRef} className="hvac-world" style={{width:pageSize.width,height:pageSize.height,transform:`translate3d(${offsetRef.current.x}px, ${offsetRef.current.y}px, 0) scale(${zoomRef.current})`,transformOrigin:"0 0",willChange:"transform",background:"white",boxShadow:"0 6px 26px #64748b35"}}>
+            <div ref={worldRef} className="hvac-world" style={{width:pageSize.width,height:pageSize.height,transform:`translate3d(${offsetRef.current.x}px, ${offsetRef.current.y}px, 0) scale(${zoomRef.current})`,transformOrigin:"0 0",background:"white",boxShadow:"0 6px 26px #64748b35"}}>
               <canvas ref={canvasRef} style={{opacity:settings.pdfOpacity}}/>
+              <canvas ref={detailRef} className="hvac-detail" style={{opacity:settings.pdfOpacity}}/>
               <svg ref={svgRef} viewBox={`0 0 ${pageSize.width} ${pageSize.height}`} width={pageSize.width} height={pageSize.height} onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp} onPointerCancel={onPointerCancel} onDoubleClick={e=>{if((tool==='draw'||tool==='cutout')&&draftRef.current.length>=3){e.preventDefault();finishRoom();}}} onContextMenu={e=>e.preventDefault()} style={{cursor:tool==='select'?'default':tool==='equip'?'copy':'crosshair'}}>
                 <rect data-layer="background" width={pageSize.width} height={pageSize.height} fill="transparent"/>
                 {rooms.map(room=><g key={room.id} onPointerDown={e=>{if(tool!=='select')return;e.stopPropagation();setSelectedId(room.id);}} style={{pointerEvents:tool==='select'?'auto':'none'}}>
@@ -988,9 +1087,9 @@ export default function App(){
                   <circle cx={edgeA.x} cy={edgeA.y} r={4/zoom} fill="#f97316"/><circle cx={edgeB.x} cy={edgeB.y} r={4/zoom} fill="#f97316"/>
                 </g>}
                 {tool==='select'&&rooms.map(room=>[room.points,...cutoutsOf(room)].map((ring,ri)=>ring.map((a,i)=>{const b=ring[(i+1)%ring.length];
-                  return <line key={`${room.id}-${ri}-${i}`} className="hvac-edge-hit" x1={a.x} y1={a.y} x2={b.x} y2={b.y} stroke="transparent" strokeWidth={10/zoom} strokeLinecap="round" pointerEvents="stroke"
-                    onPointerDown={e=>{if(e.button!==0)return;e.stopPropagation();setSelectedIdRaw(room.id);setSelectedEdge({ring:ri-1,index:i});
-                      setMessage(`${ri===0?'Wall':'Cutout wall'} selected. Arrow keys nudge 1" (Shift: 1'-0").${ri>0?' Delete removes this cutout.':''}`);}}/>;})))}
+                  const ang=Math.abs(Math.atan2(b.y-a.y,b.x-a.x)*180/Math.PI)%180,cur=ang<30||ang>150?'ns-resize':ang>60&&ang<120?'ew-resize':ang<90?'nesw-resize':'nwse-resize';
+                  return <line key={`${room.id}-${ri}-${i}`} className="hvac-edge-hit" x1={a.x} y1={a.y} x2={b.x} y2={b.y} stroke="transparent" strokeWidth={10/zoom} strokeLinecap="butt" pointerEvents="stroke"
+                    style={{cursor:cur}} onPointerDown={e=>startEdgeDrag(e,room,ri-1,i)}/>;})))}
                 {rooms.map(room=>{const lp=room.labelPos??labelPoint(room),size=room.labelSize??DEFAULT_LABEL_SIZE,a=roomArea(room),sel=room.id===selectedId;
                   return <text key={room.id} ref={el=>{if(el)labelRefs.current.set(room.id,el);else labelRefs.current.delete(room.id);}}
                     className={tool==='select'?'hvac-label':undefined} x={lp.x} y={lp.y} textAnchor="middle"
@@ -1008,18 +1107,18 @@ export default function App(){
                 {dropTarget&&(()=>{const r=rooms.find(x=>x.id===dropTarget);return r&&r.id!==selectedId?<path d={ringPath(r.points)} fill="#16a34a" fillOpacity={.08} stroke="#16a34a" strokeWidth={3/zoom} strokeDasharray={`${8/zoom} ${5/zoom}`} pointerEvents="none"/>:null;})()}
                 {rooms.map(room=>room.equipment.map(eq=>{if(!eq.pos)return null;
                   const t=equipType(eq.type),{w,h}=symbolPt(eq),sel=eq.id===selectedEquip,hov=eq.id===hoverEquip,oa=eq.method==='oa';
-                  const lost=sel&&dropTarget===null,color=lost?'#dc2626':t.color,stroke=sel?'#f97316':hov?'#f59e0b':color;
+                  const st=styleOf(eq.type),lost=sel&&dropTarget===null,color=lost?'#dc2626':st.color,stroke=sel?'#f97316':hov?'#f59e0b':color;
                   const fs=Math.max(2.5,Math.min(w,h)*(oa?0.42:0.34)),flow=equipSupply(eq),cap=eq.method==='capacity'?(eq.cools?eq.coolCap:eq.heatCap):null;
                   const sub=cap!==null?`${fmt(Math.round(cap/100)/10)} MBH`:`${fmt(flow)} cfm`;
                   return <g key={eq.id} className={tool==='select'?'hvac-equip-sym':undefined} pointerEvents={tool==='select'?'all':'none'}
                     onPointerDown={e=>startEquipDrag(e,room,eq)} onPointerEnter={()=>setHoverEquip(eq.id)} onPointerLeave={()=>setHoverEquip(null)}>
-                    <rect x={eq.pos.x-w/2} y={eq.pos.y-h/2} width={w} height={h} rx={oa?0:Math.min(w,h)*0.08} fill={color} fillOpacity={sel?.25:.13} stroke={stroke} strokeWidth={(sel||hov?2.2:1.3)/zoom}/>
+                    <rect x={eq.pos.x-w/2} y={eq.pos.y-h/2} width={w} height={h} rx={oa?0:Math.min(w,h)*0.08} fill={color} fillOpacity={Math.min(1,st.opacity+(sel?.12:0))} stroke={stroke} strokeWidth={(sel||hov?2.2:1.3)/zoom}/>
                     {oa&&<path d={`M${eq.pos.x-w/2},${eq.pos.y-h/2}L${eq.pos.x+w/2},${eq.pos.y+h/2}M${eq.pos.x+w/2},${eq.pos.y-h/2}L${eq.pos.x-w/2},${eq.pos.y+h/2}`} stroke={color} strokeWidth={1/zoom} pointerEvents="none"/>}
                     <text x={eq.pos.x} y={oa?eq.pos.y+h/2+fs*1.05:eq.pos.y-fs*0.15} textAnchor="middle" fontSize={fs} fontWeight={700} fill={lost?'#b91c1c':'#0f172a'} stroke="white" strokeWidth={fs*0.25} paintOrder="stroke" pointerEvents="none">
                       {eq.tag||t.prefix}{oa?` · ${sub}`:''}</text>
                     {!oa&&<text x={eq.pos.x} y={eq.pos.y+fs*0.95} textAnchor="middle" fontSize={fs*0.8} fill="#334155" stroke="white" strokeWidth={fs*0.2} paintOrder="stroke" pointerEvents="none">{sub}</text>}
                   </g>;}))}
-                {tool==='equip'&&hover&&(()=>{const g=newEquip(placeType),{w,h}=symbolPt(g),ok=!!roomAt(hover),c=ok?equipType(placeType).color:'#dc2626';
+                {tool==='equip'&&hover&&(()=>{const g=newEquip(placeType),{w,h}=symbolPt(g),ok=!!roomAt(hover),c=ok?styleOf(placeType).color:'#dc2626';
                   return <g pointerEvents="none" opacity={.6}><rect x={hover.x-w/2} y={hover.y-h/2} width={w} height={h} fill={c} fillOpacity={.15} stroke={c} strokeWidth={1.5/zoom} strokeDasharray={`${4/zoom} ${3/zoom}`}/>
                     {g.method==='oa'&&<path d={`M${hover.x-w/2},${hover.y-h/2}L${hover.x+w/2},${hover.y+h/2}M${hover.x+w/2},${hover.y-h/2}L${hover.x-w/2},${hover.y+h/2}`} stroke={c} strokeWidth={1/zoom}/>}</g>;})()}
                 {rectPreview&&<polygon points={rectPreview.map(p=>`${p.x},${p.y}`).join(' ')} fill={drawColor} fillOpacity={.12} stroke={drawColor} strokeWidth={2/zoom} strokeDasharray={`${5/zoom} ${4/zoom}`} pointerEvents="none"/>}
@@ -1035,8 +1134,19 @@ export default function App(){
           {pdf&&pdf.numPages>1&&<div className="hvac-row"><span>PDF page</span><select value={pageNumber} onChange={e=>{const next=Number(e.target.value);e.currentTarget.blur();if(next===pageNumber)return;if(rooms.length&&!window.confirm('Switching PDF pages currently clears room takeoffs. Save your project first. Continue?'))return;setPageNumber(next);setRooms([]);setDraft([]);setSelectedId(null);}}>{Array.from({length:pdf.numPages},(_,i)=><option key={i} value={i+1}>{i+1}</option>)}</select></div>}
           <div className="hvac-field"><label>Site altitude (ft)</label><NumField value={altitudeFt} onChange={setAltitudeFt}/>
             <div className="hvac-muted hvac-load-eq">Sensible heat factor {sensibleFactor(altitudeFt).toFixed(3)} BTU/h·cfm·°F (1.08 at sea level)</div></div>
-          <p className="hvac-muted">Trace inside wall faces. Verify the printed scale against a known dimension before relying on areas.</p>
-          <p className="hvac-muted"><strong>Draw ({sc('draw')}) / Cutout ({sc('cutout')}):</strong> drag for a rectangle, or click corners for a polygon · close by clicking the first corner, double-clicking, or Enter · Backspace removes last corner · Esc cancels<br/><strong>Select ({sc('select')}):</strong> click a room, a wall, or a label · Arrows nudge 1" (Shift 1'-0") · drag a label to move it, drag its corner or press + / − to resize · Delete removes room or selected cutout · Ctrl/Cmd+Z undo<br/><strong>Equipment ({sc('equip')}):</strong> click in a room to place · drag a symbol to move it, even into another room · Delete removes · Ctrl/Cmd+D duplicates · Ctrl/Cmd+C / V copies into the room under the cursor<br/><strong>View:</strong> wheel zoom · Space + drag or middle-drag to pan · {sc('fit')} fit</p>
+          {selected&&<>
+            <div className="hvac-subhead">{selected.name}</div>
+            <div className="hvac-field"><label>Label size (pt)</label><div className="hvac-inline"><NumField value={selected.labelSize??DEFAULT_LABEL_SIZE} min={2} onChange={v=>updateRoom({labelSize:Math.min(72,v)})}/>
+              <button className="hvac-btn" title="Put the label back in its automatic position" disabled={!selected.labelPos} onClick={()=>{pushHistory();updateRoom({labelPos:null});}}>Reset position</button></div></div>
+            <div className="hvac-field"><label>Cutouts</label>
+              {cutoutsOf(selected).length===0?<div className="hvac-muted">None. Use the Cutout tool ({sc('cutout')}) to remove an area from this room.</div>:
+                cutoutsOf(selected).map((c,k)=><div className="hvac-cutout-row" key={k}><span className="hvac-cutout-swatch"/>Cutout {k+1}
+                  <strong>{sf(areaPx(c))===null?'—':`−${fmt(sf(areaPx(c))!)} SF`}</strong>
+                  <button className="hvac-btn icon-only" title={`Remove cutout ${k+1}`} onClick={()=>deleteCutout(k)}><Trash2 size={13}/></button></div>)}</div>
+            {host&&<button className="hvac-btn" style={{width:'100%'}} onClick={()=>cutFromContainer(selected)}><Scissors size={15}/> Cut this room out of {host.name}</button>}
+          </>}
+          <p className="hvac-muted" style={{marginTop:12}}>Verify the printed scale against a known dimension before relying on areas. Controls and shortcuts are listed in{' '}
+            <button className="hvac-linkbtn" style={{padding:0}} onClick={()=>{setSettingsOpen(true);setCaptureNote('');}}>Settings</button>.</p>
         </Section>
         {!selected&&<p className="hvac-muted hvac-pad">Select a room to see its properties.</p>}
         {selected&&selectedEdge&&edgeLen!==null&&tool==='select'&&<Section title={selectedEdge.ring<0?'Selected Wall':`Cutout ${selectedEdge.ring+1} Wall`} open={secOpen('wall')} onToggle={()=>toggleSec('wall')}>
@@ -1051,7 +1161,7 @@ export default function App(){
           return <>
           <Section title="Room Properties" open={secOpen('room')} onToggle={()=>toggleSec('room')} aside={net===null?undefined:`${fmt(net)} SF`}>
             <div className="hvac-field"><label>Template</label><div className="hvac-inline">
-              <select value={tplChoice} onChange={e=>setTplChoice(e.target.value)} aria-label="Room template">
+              <select className="hvac-grow" value={tplChoice} onChange={e=>setTplChoice(e.target.value)} aria-label="Room template">
                 <option value="">Choose a template…</option>
                 <optgroup label="Standard">{BUILTIN_TEMPLATES.map(t=><option key={t.id} value={t.id}>{t.name}</option>)}</optgroup>
                 {settings.roomTemplates.length>0&&<optgroup label="My templates">{settings.roomTemplates.map(t=><option key={t.id} value={t.id}>{t.name}</option>)}</optgroup>}
@@ -1062,14 +1172,14 @@ export default function App(){
             <button className="hvac-linkbtn" onClick={()=>saveRoomAsTemplate(selected)}>Save this room's settings as a template…</button></div>
             <div className="hvac-field"><label>Name</label><input value={selected.name} onChange={e=>updateRoom({name:e.target.value})}/></div>
             <div className="hvac-field"><label>Ceiling height (ft)</label><NumField value={selected.height} onChange={v=>updateRoom({height:v})}/></div>
-            {cutoutsOf(selected).length>0&&<><div className="hvac-row"><span>Gross area</span><strong>{m.gross===null?'—':`${fmt(m.gross)} SF`}</strong></div>
-              {cutoutsOf(selected).map((c,k)=><div className="hvac-row" key={k}><span style={{color:'#dc2626'}}>Cutout {k+1}</span><span style={{display:'flex',gap:6,alignItems:'center'}}><strong>{sf(areaPx(c))===null?'—':`−${fmt(sf(areaPx(c))!)} SF`}</strong><button className="hvac-btn icon-only" title="Remove cutout" onClick={()=>deleteCutout(k)}><Trash2 size={13}/></button></span></div>)}</>}
-            <div className="hvac-row hvac-result"><span>Net floor area</span><strong>{net===null?'Calibrate first':`${fmt(net)} SF`}</strong></div>
-            <div className="hvac-row"><span>Volume</span><strong>{m.volume===null?'—':`${fmt(m.volume)} CF`}</strong></div>
-            <div className="hvac-field"><label>Label size (pt)</label><div className="hvac-inline"><NumField value={selected.labelSize??DEFAULT_LABEL_SIZE} min={2} onChange={v=>updateRoom({labelSize:Math.min(72,v)})}/>
-              <button className="hvac-btn" title="Put the label back in its automatic position" disabled={!selected.labelPos} onClick={()=>{pushHistory();updateRoom({labelPos:null});}}>Reset position</button></div></div>
-            {host&&<button className="hvac-btn" style={{marginTop:8,width:'100%'}} onClick={()=>cutFromContainer(selected)}><Scissors size={15}/> Cut this room out of {host.name}</button>}
-            <button className="hvac-btn danger" onClick={deleteRoom}><Trash2 size={15}/> Delete Room</button>
+            <div className="hvac-area-card">
+              <div><strong>{net===null?'—':fmt(net)}</strong><span>Net SF</span></div>
+              <div><strong>{m.volume===null?'—':fmt(Math.round(m.volume))}</strong><span>Volume CF</span></div>
+              <div><strong>{m.perimeter===null?'—':fmt(m.perimeter)}</strong><span>Perim. LF</span></div>
+            </div>
+            {net===null?<div className="hvac-area-note">Set or calibrate the drawing scale to calculate areas.</div>
+              :cutoutsOf(selected).length>0&&<div className="hvac-area-note">{fmt(m.gross!)} SF gross − {fmt(m.cutouts!)} SF in {cutoutsOf(selected).length} cutout{cutoutsOf(selected).length>1?'s':''}</div>}
+            <button className="hvac-btn danger" style={{width:'100%'}} onClick={deleteRoom}><Trash2 size={15}/> Delete Room</button>
           </Section>
           <Section title="ASHRAE 62.1 Ventilation" open={secOpen('ashrae')} onToggle={()=>toggleSec('ashrae')} aside={<span className={m.oaShort?'hvac-bad-text':undefined}>{cfm(m.voz)}</span>}>
             {tag(!!tpl&&ashraeMatches(selected,tpl))}
@@ -1133,7 +1243,7 @@ export default function App(){
                 <div className="hvac-eqcard-head" role="button" tabIndex={0} aria-expanded={open} onClick={toggle}
                   onKeyDown={ev=>{if(ev.key==='Enter'){ev.preventDefault();toggle();}}}>
                   <ChevronRight size={13} className="hvac-chev"/>
-                  <span className="hvac-swatch" style={{background:t.color,borderRadius:oa?1:3}}/>
+                  <span className="hvac-swatch" style={{background:styleOf(e.type).color,borderRadius:oa?1:3}}/>
                   <strong>{e.tag||t.prefix}</strong><span className="hvac-eqcard-type">{e.type}</span>
                   <span className="hvac-eqcard-num">{headNum}</span>
                   <button className="hvac-btn icon-only" title={`Remove ${e.tag||e.type}`} onClick={ev=>{ev.stopPropagation();removeEquip(selected.id,e.id);}}><Trash2 size={13}/></button>
@@ -1216,10 +1326,39 @@ export default function App(){
           <button className="hvac-btn" style={{marginTop:10}} onClick={()=>{setSettings(st=>({...st,shortcuts:{...DEFAULT_SHORTCUTS}}));setCapturing(null);setCaptureNote('Shortcuts reset to defaults.');}}>Reset to defaults</button>
         </section>
         <section>
+          <h4>Controls</h4>
+          <div className="hvac-fixed">
+            <span>Draw ({sc('draw')})</span><span>Drag for a rectangle, or click corners for a polygon. Close by clicking the first corner, double-clicking, or Enter.</span>
+            <span>Cutout ({sc('cutout')})</span><span>Same as Draw; the shape is removed from the room it sits in.</span>
+            <span>Select ({sc('select')})</span><span>Click a room, label, wall or piece of equipment. Drag a wall to move it, drag a label or its corner handle to move or resize it.</span>
+            <span>Equipment ({sc('equip')})</span><span>Click inside a room to place. Drag a symbol to move it, even into another room.</span>
+            <span>Wheel</span><span>Zoom</span>
+            <span>{sc('fit')}</span><span>Fit page</span>
+          </div>
+          <p className="hvac-muted" style={{marginTop:8}}>Trace inside wall faces. Verify the printed scale against a known dimension before relying on areas.</p>
+        </section>
+        <section>
+          <h4>Equipment colors</h4>
+          <p className="hvac-muted">Symbol colour and fill opacity for each equipment type on the plan.</p>
+          <div className="hvac-colors">
+            {EQUIP_TYPES.map(t=>{const st=styleOf(t.type),set=(ch:Partial<{color:string;opacity:number}>)=>setSettings(x=>({...x,equipStyle:{...x.equipStyle,[t.type]:{...st,...ch}}}));
+              return <div className="hvac-color-row" key={t.type}>
+                <svg width="30" height="18" viewBox="0 0 30 18" aria-hidden="true"><rect x="1" y="1" width={t.type===OA_DIFFUSER?16:28} height="16" rx={t.type===OA_DIFFUSER?0:2} fill={st.color} fillOpacity={st.opacity} stroke={st.color} strokeWidth="1.5"/>
+                  {t.type===OA_DIFFUSER&&<path d="M1,1L17,17M17,1L1,17" stroke={st.color} strokeWidth="1"/>}</svg>
+                <span>{t.type}</span>
+                <input type="color" value={st.color} aria-label={`${t.type} colour`} onChange={e=>set({color:e.target.value})}/>
+                <input type="range" min={0} max={100} step={5} value={Math.round(st.opacity*100)} aria-label={`${t.type} fill opacity`} onChange={e=>set({opacity:Number(e.target.value)/100})}/>
+                <span className="hvac-color-pct">{Math.round(st.opacity*100)}%</span>
+              </div>;})}
+          </div>
+          <button className="hvac-btn" style={{marginTop:10}} disabled={!Object.keys(settings.equipStyle).length} onClick={()=>setSettings(x=>({...x,equipStyle:{}}))}>Reset colors</button>
+        </section>
+        <section>
           <h4>Fixed keys</h4>
           <div className="hvac-fixed">
             <span>Space + drag</span><span>Pan the drawing</span>
-            <span>Arrows</span><span>Nudge selected equipment, wall or room 1"</span>
+            <span>Arrows</span><span>Nudge selected equipment, wall, label or room 1"</span>
+            <span>+ / −</span><span>Resize the selected label</span>
             <span>Shift + Arrows</span><span>Nudge 1'-0"</span>
             <span>Enter</span><span>Finish polygon</span>
             <span>Backspace</span><span>Remove last corner / selected cutout</span>

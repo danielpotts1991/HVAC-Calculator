@@ -11,7 +11,9 @@
 
 /* Fixed transform viewport: never scroll or resize the drawing during zoom. */
 .hvac-main{position:relative;overflow:hidden;padding:0;touch-action:none;}
-.hvac-world{transform-origin:0 0;will-change:transform;backface-visibility:hidden;}
+.hvac-world{transform-origin:0 0;}
+.hvac-world.moving{will-change:transform}
+.hvac-world canvas.hvac-detail{position:absolute;display:none;pointer-events:none}
 
 /* Wall hit targets in Select mode */
 .hvac-edge-hit{cursor:pointer}.hvac-edge-hit:hover{stroke:#f9731688}
@@ -222,3 +224,25 @@
 .hvac-grid2 select,.hvac-grid3 select{width:100%;min-width:0}
 .hvac-subhead{margin:16px 0 4px;font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:#94a3b8}
 .hvac-world svg{user-select:none;-webkit-user-select:none}
+
+/* Settings: equipment colours */
+.hvac-colors{display:flex;flex-direction:column;gap:6px}
+.hvac-color-row{display:grid;grid-template-columns:32px 1fr 34px 90px 34px;align-items:center;gap:8px;font-size:12px}
+.hvac-color-row input[type=color]{width:30px;height:24px;padding:0;border:1px solid #cbd5e1;border-radius:5px;background:white;cursor:pointer}
+.hvac-color-row input[type=range]{width:100%;accent-color:#2563eb}
+.hvac-color-pct{color:#64748b;text-align:right;font-variant-numeric:tabular-nums}
+
+/* Room area summary */
+.hvac-area-card{display:grid;grid-template-columns:repeat(3,1fr);gap:1px;margin:10px 0 4px;border:1px solid #e2e8f0;border-radius:8px;background:#e2e8f0;overflow:hidden}
+.hvac-area-card>div{display:flex;flex-direction:column;align-items:center;padding:9px 4px;background:#f8fafc}
+.hvac-area-card strong{font-size:15px;color:#0f172a;font-variant-numeric:tabular-nums}
+.hvac-area-card>div:first-child strong{color:#1d4ed8}
+.hvac-area-card span{font-size:10.5px;color:#64748b;text-transform:uppercase;letter-spacing:.04em;margin-top:1px}
+.hvac-area-note{font-size:11.5px;color:#64748b;margin:2px 0 6px;text-align:center}
+.hvac-cutout-row{display:flex;align-items:center;gap:6px;padding:3px 0;font-size:12px}
+.hvac-cutout-row strong{margin-left:auto;color:#b91c1c}
+.hvac-cutout-row .hvac-btn.icon-only{padding:3px;color:#94a3b8}
+.hvac-cutout-swatch{width:10px;height:10px;border:1.5px dashed #dc2626;border-radius:2px}
+.hvac-fixed span:nth-child(odd){white-space:nowrap}
+.hvac-sec-body .hvac-inline select.hvac-grow{flex:1;min-width:0;width:auto}
+.hvac-area-card span{white-space:nowrap}
