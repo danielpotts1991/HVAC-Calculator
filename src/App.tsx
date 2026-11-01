@@ -3,7 +3,7 @@ import type { ReactNode } from 'react';
 import type { ChangeEvent, PointerEvent as ReactPointerEvent, WheelEvent as ReactWheelEvent } from 'react';
 import * as pdfjsLib from 'pdfjs-dist';
 import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
-import { Upload, MousePointer2, PenTool, Ruler, Trash2, Undo2, ZoomIn, ZoomOut, Download, FileText, Maximize, Save, FolderOpen, SaveAll, Scissors, Magnet, Settings, Eye, X, ChevronRight, ChevronsLeft, ChevronsRight, Plus, ClipboardList, Check, AirVent, Copy, RotateCw } from 'lucide-react';
+import { Upload, MousePointer2, PenTool, Ruler, Trash2, Undo2, ZoomIn, ZoomOut, Download, FileText, Maximize, Save, FolderOpen, SaveAll, Scissors, Magnet, Settings, Eye, X, ChevronRight, ChevronsLeft, ChevronsRight, Plus, ClipboardList, Check, AirVent, Copy, RotateCw, RefreshCw } from 'lucide-react';
 import './App.css';
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = workerUrl;
@@ -342,6 +342,21 @@ function placeMissingEquipment(list: Room[], ptPerFt: number): Room[] {
     return room;
   });
 }
+// Shift a room and everything attached to it (cutouts, label, equipment).
+function translateRoom(r: Room, dx: number, dy: number): Room {
+  const mv = (p: Point) => ({ x: p.x + dx, y: p.y + dy });
+  return { ...r, points: r.points.map(mv), cutouts: (r.cutouts ?? []).map(c => c.map(mv)), labelPos: r.labelPos ? mv(r.labelPos) : r.labelPos,
+    equipment: r.equipment.map(e => e.pos ? { ...e, pos: mv(e.pos) } : e) };
+}
+type Rect = { x0: number; y0: number; x1: number; y1: number };
+const inRect = (p: Point, b: Rect) => p.x >= b.x0 && p.x <= b.x1 && p.y >= b.y0 && p.y <= b.y1;
+// Crossing selection: the room touches the box at all.
+function ringTouchesRect(ring: Point[], b: Rect) {
+  if (ring.some(p => inRect(p, b))) return true;
+  const c = [{ x: b.x0, y: b.y0 }, { x: b.x1, y: b.y0 }, { x: b.x1, y: b.y1 }, { x: b.x0, y: b.y1 }];
+  if (c.some(p => pointInRing(p, ring))) return true;
+  return ringsCross(ring, c);
+}
 const ringPath = (r: Point[]) => 'M' + r.map(p => `${p.x},${p.y}`).join('L') + 'Z';
 const fmtFeet = (feet: number) => {
   const totalIn = Math.round(feet * 12 * 4) / 4;
@@ -394,7 +409,13 @@ export default function App(){
   // Hold space to pan with the left mouse button.
   const [spaceHeld,setSpaceHeld]=useState(false);const spaceRef=useRef(false);
   const [panning,setPanning]=useState(false);
-  const setSelectedId=(id:string|null)=>{setSelectedIdRaw(id);setSelectedEdge(null);setLabelSel(false);setSelectedEquip(null);};
+  // Multi-selection of rooms; selectedId is the primary (last clicked) one shown in the properties panel.
+  const [selIds,setSelIds]=useState<string[]>([]);
+  const [marquee,setMarquee]=useState<{a:Point;b:Point}|null>(null);
+  const marqueeRef=useRef<{start:Point;add:boolean}|null>(null);
+  const moveDragRef=useRef<{ids:string[];start:Point;orig:Map<string,Room>;pushed:boolean;dx:number;dy:number;clicked:string;collapse:boolean}|null>(null);
+  const setSelection=(ids:string[],primary:string|null)=>{setSelIds(ids);setSelectedIdRaw(primary);setSelectedEdge(null);setLabelSel(false);setSelectedEquip(null);};
+  const setSelectedId=(id:string|null)=>setSelection(id?[id]:[],id);
   // Label drag / resize in progress. history is pushed once, on the first real movement.
   const edgeDragRef=useRef<{roomId:string;ring:number;index:number;startRing:Point[];start:Point;normal:Point;pushed:boolean;dist:number}|null>(null);
   const labelDragRef=useRef<{mode:'move'|'size';id:string;start:Point;startPos:Point;startSize:number;center:Point;pushed:boolean}|null>(null);
@@ -411,6 +432,7 @@ export default function App(){
   const detailTaskRef=useRef<{cancel:()=>void}|null>(null);
   const detailTimerRef=useRef<ReturnType<typeof setTimeout>|null>(null);
   const movingTimerRef=useRef<ReturnType<typeof setTimeout>|null>(null);
+  const replaceRef=useRef<HTMLInputElement>(null);
   const canvasRef=useRef<HTMLCanvasElement>(null),svgRef=useRef<SVGSVGElement>(null),fileRef=useRef<HTMLInputElement>(null),scrollRef=useRef<HTMLElement>(null);
   const panRef=useRef<{x:number;y:number;offsetX:number;offsetY:number}|null>(null);
   const offsetRef=useRef({x:20,y:20});
@@ -545,6 +567,8 @@ export default function App(){
     if(e.key===' '&&!mod){e.preventDefault();if(document.activeElement instanceof HTMLButtonElement)document.activeElement.blur();
       if(!spaceRef.current){spaceRef.current=true;setSpaceHeld(true);}return;}
     // Equipment: duplicate, copy, paste (paste goes into the room under the cursor).
+    if(mod&&k0==='a'){e.preventDefault();if(tool!=='select')switchTool('select');const ids=rooms.map(r=>r.id);setSelection(ids,ids[ids.length-1]??null);
+      setMessage(`All ${ids.length} rooms selected. Drag any of them, or use the arrow keys, to move them together.`);return;}
     const curEquip=selected?.equipment.find(x=>x.id===selectedEquip);
     if(mod&&k0==='d'&&curEquip&&selected){e.preventDefault();const c=cloneInto(curEquip,selected);setMessage(`Duplicated ${curEquip.tag||curEquip.type} as ${c.tag}.`);return;}
     if(mod&&k0==='c'&&curEquip){clipboardRef.current={...curEquip};setMessage(`Copied ${curEquip.tag||curEquip.type}. Point at a room and press Ctrl/Cmd+V to paste.`);return;}
@@ -554,6 +578,7 @@ export default function App(){
       e.preventDefault();const c=cloneInto(clipboardRef.current,target,under?hover!:undefined);setMessage(`Pasted ${c.tag} into ${target.name}.`);return;
     }
     if(e.target instanceof HTMLButtonElement&&e.key==='Enter')return;
+    if(e.key==='Escape'&&!(selectedEdge||labelSel||selectedEquip||draftRef.current.length||tool!=='select'))setSelectedId(null);
     if(e.key==='Escape'){setDraft([]);setRectStart(null);setRectEnd(null);rectRef.current=null;pressRef.current=null;setCalPoints([]);setSelectedEdge(null);setLabelSel(false);setSelectedEquip(null);
       if(tool==='equip')switchTool('select');}
     if(e.key==='Backspace'||e.key==='Delete'){
@@ -561,7 +586,7 @@ export default function App(){
       if(draftRef.current.length){setDraft(v=>v.slice(0,-1));return;}
       if(tool==='select'&&selected&&selectedEquip){removeEquip(selected.id,selectedEquip);return;}
       if(tool==='select'&&selected&&selectedEdge&&selectedEdge.ring>=0){deleteCutout(selectedEdge.ring);return;}
-      if(e.key==='Delete'&&tool==='select'&&selected)deleteRoom();
+      if(e.key==='Delete'&&tool==='select'&&(selected||selIds.length))deleteRoom();
       return;
     }
     if(e.key==='Enter'&&(tool==='draw'||tool==='cutout')){e.preventDefault();finishRoom();}
@@ -593,11 +618,20 @@ export default function App(){
     return()=>{window.removeEventListener('keyup',up);window.removeEventListener('blur',reset);};
   },[]);
   async function importPdf(e:ChangeEvent<HTMLInputElement>){const file=e.target.files?.[0];if(!file)return;
+    if(rooms.length&&!window.confirm('Start a new takeoff from this PDF? This clears the current rooms.\n\nTo keep your rooms and just swap the drawing, cancel and use "Replace background" instead.')){e.target.value='';return;}
     try{const data=new Uint8Array(await file.arrayBuffer());const doc=await pdfjsLib.getDocument({data:data.slice()}).promise;
       pdfBytesRef.current=data.slice() as Uint8Array<ArrayBuffer>;projectHandleRef.current=null;setProjectName('Untitled.hvac.json');
       historyRef.current=[];setPdf(doc);setPdfName(file.name);setPageNumber(1);setRooms([]);setDraft([]);setSelectedId(null);setCalPoints([]);setScale('1/8');setCustomFeetPerPoint(null);setTool('select');setZoom(1);zoomRef.current=1;offsetRef.current={x:20,y:20};
       setMessage(`PDF loaded. Set the drawing scale, then press ${keyLabel(settings.shortcuts.draw)} to draw rooms along inside wall faces.`);
     }catch(err){console.error(err);setMessage('Unable to open PDF.');}e.target.value='';}
+  // Swap the background drawing but keep every room, the scale and the project file.
+  async function replacePdf(e:ChangeEvent<HTMLInputElement>){const file=e.target.files?.[0];e.target.value='';if(!file)return;
+    try{const data=new Uint8Array(await file.arrayBuffer());const doc=await pdfjsLib.getDocument({data:data.slice()}).promise;
+      const page=pageNumber<=doc.numPages?pageNumber:1,vp=(await doc.getPage(page)).getViewport({scale:1});
+      const sameSize=Math.abs(vp.width-pageSize.width)<1&&Math.abs(vp.height-pageSize.height)<1;
+      pdfBytesRef.current=data.slice() as Uint8Array<ArrayBuffer>;setPdf(doc);setPdfName(file.name);setPageNumber(page);
+      setMessage(`Background replaced with ${file.name}${doc.numPages>1?` (page ${page})`:''}. Rooms kept.${sameSize?'':' The new sheet is a different size.'} If the plan shifted, press Ctrl/Cmd+A, then drag or use the arrow keys to realign.${scale==='custom'?' Check the custom calibration still matches.':''}`);
+    }catch(err){console.error(err);setMessage('Unable to open that PDF. The current background was kept.');}}
   function projectData():ProjectFile{return {version:1,pdfName,pdfBase64:pdfBytesRef.current?bytesToBase64(pdfBytesRef.current):null,pageNumber,scale,customFeetPerPoint,altitudeFt,rooms};}
   function downloadProject(content:string,name:string){const url=URL.createObjectURL(new Blob([content],{type:'application/json'}));const a=document.createElement('a');a.href=url;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(url),2000);}
   async function saveProject(saveAs=false){
@@ -672,8 +706,9 @@ export default function App(){
     setSelectedEdge(null);setMessage(`Cutout removed from ${selected.name}.`);
   }
   function deleteRoom(){
-    if(!selected)return;pushHistory();
-    setRooms(v=>v.filter(r=>r.id!==selected.id));setSelectedId(null);setMessage(`${selected.name} deleted. Ctrl/Cmd+Z to undo.`);
+    const ids=selIds.length?selIds:selected?[selected.id]:[];if(!ids.length)return;pushHistory();
+    setRooms(v=>v.filter(r=>!ids.includes(r.id)));setSelectedId(null);
+    setMessage(`${ids.length===1?(rooms.find(r=>r.id===ids[0])?.name??'Room'):`${ids.length} rooms`} deleted. Ctrl/Cmd+Z to undo.`);
   }
   // The smallest other room this room sits inside (for "cut out of" in the properties panel).
   function containerOf(room:Room){
@@ -690,6 +725,7 @@ export default function App(){
     const prev=historyRef.current.pop();
     if(!prev){setMessage('Nothing to undo.');return;}
     setRooms(prev);setSelectedEdge(null);
+    setSelIds(ids=>ids.filter(id=>prev.some(r=>r.id===id)));
     if(selectedId&&!prev.some(r=>r.id===selectedId))setSelectedId(null);
     setMessage('Undone.');
   }
@@ -722,7 +758,7 @@ export default function App(){
     return e;
   }
   function selectEquip(roomId:string,id:string){
-    setSelectedIdRaw(roomId);setSelectedEdge(null);setLabelSel(false);setSelectedEquip(id);
+    setSelIds([roomId]);setSelectedIdRaw(roomId);setSelectedEdge(null);setLabelSel(false);setSelectedEquip(id);
     setSettings(st=>st.rightOpen&&st.sections.hvac!==false?st:{...st,rightOpen:true,sections:{...st.sections,hvac:true}});
   }
   function addEquipTo(room:Room,type:string,pos?:Point){
@@ -784,6 +820,10 @@ export default function App(){
       const moved=offsetEdge(ring,selectedEdge.index,arrow,step);
       if(!moved){setMessage('That arrow runs along the selected wall. Use an arrow that points across it.');return;}
       next=selectedEdge.ring<0?{...selected,points:moved}:{...selected,cutouts:cutoutsOf(selected).map((c,k)=>k===selectedEdge.ring?moved:c)};
+    }else if(selIds.length>1){
+      const ids=selIds;pushHistory();
+      setRooms(v=>v.map(r=>ids.includes(r.id)?translateRoom(r,arrow.x*step,arrow.y*step):r));
+      setMessage(`Nudged ${ids.length} rooms ${big?'1\'-0"':'1"'}.`);return;
     }else{
       const shift=(r:Point[])=>r.map(p=>({x:p.x+arrow.x*step,y:p.y+arrow.y*step}));
       next={...selected,points:shift(selected.points),cutouts:cutoutsOf(selected).map(shift),labelPos:selected.labelPos?shift([selected.labelPos])[0]:selected.labelPos,
@@ -841,16 +881,38 @@ export default function App(){
         draftRef.current=[...corners,next];
         setDraft(draftRef.current);
       }
-    }else setSelectedId(null);
+    }else{
+      // Select tool on empty space: box-select (Shift/Ctrl/Cmd adds to the selection).
+      marqueeRef.current={start:p,add:e.shiftKey||e.ctrlKey||e.metaKey};setMarquee({a:p,b:p});
+      e.currentTarget.setPointerCapture(e.pointerId);
+    }
   }
   // preventDefault on a press also skips the browser's focus change, so release any focused field
   // ourselves; otherwise arrow keys / Delete would keep going to the last-edited input.
   const releaseFocus=()=>{const a=document.activeElement;if(a instanceof HTMLElement&&a!==document.body)a.blur();};
+  const fmtMove=(dx:number,dy:number)=>{const f=(v:number)=>feetPerPoint?fmtFeet(Math.abs(v)*feetPerPoint):`${fmt(Math.abs(v))} pt`;
+    return [dx?`${dx>0?'right':'left'} ${f(dx)}`:'',dy?`${dy>0?'down':'up'} ${f(dy)}`:''].filter(Boolean).join(', ')||'0';};
+  // Press on a room: select it (Shift/Ctrl/Cmd adds or removes) and drag to move the whole selection.
+  function startRoomDrag(e:ReactPointerEvent<SVGElement>,room:Room){
+    if(tool!=='select'||e.button!==0)return;
+    e.stopPropagation();e.preventDefault();releaseFocus();
+    let ids:string[],collapse=false;
+    if(e.shiftKey||e.ctrlKey||e.metaKey){
+      ids=selIds.includes(room.id)?selIds.filter(x=>x!==room.id):[...selIds,room.id];
+      setSelection(ids,ids.includes(room.id)?room.id:ids[ids.length-1]??null);
+      setMessage(`${ids.length} room${ids.length===1?'':'s'} selected.`);
+      if(!ids.includes(room.id))return;
+    }else if(selIds.includes(room.id)&&selIds.length>1){
+      ids=selIds;collapse=true;setSelectedIdRaw(room.id);setSelectedEdge(null);setLabelSel(false);setSelectedEquip(null);
+    }else{ids=[room.id];setSelectedId(room.id);}
+    moveDragRef.current={ids,start:pointFromEvent(e as unknown as ReactPointerEvent<SVGSVGElement>),orig:new Map(rooms.filter(r=>ids.includes(r.id)).map(r=>[r.id,r])),pushed:false,dx:0,dy:0,clicked:room.id,collapse};
+    svgRef.current?.setPointerCapture(e.pointerId);
+  }
   // Press on a wall: select it, and dragging moves it across itself (snaps to 1" when scaled).
   function startEdgeDrag(e:ReactPointerEvent<SVGElement>,room:Room,ringIdx:number,index:number){
     if(tool!=='select'||e.button!==0)return;
     e.stopPropagation();e.preventDefault();releaseFocus();
-    setSelectedIdRaw(room.id);setSelectedEquip(null);setLabelSel(false);setSelectedEdge({ring:ringIdx,index});
+    setSelIds([room.id]);setSelectedIdRaw(room.id);setSelectedEquip(null);setLabelSel(false);setSelectedEdge({ring:ringIdx,index});
     const ring=ringIdx<0?room.points:cutoutsOf(room)[ringIdx],normal=ring?edgeNormal(ring,index):null;
     if(!ring||!normal)return;
     edgeDragRef.current={roomId:room.id,ring:ringIdx,index,startRing:ring.map(p=>({...p})),start:pointFromEvent(e as unknown as ReactPointerEvent<SVGSVGElement>),normal,pushed:false,dist:0};
@@ -870,6 +932,17 @@ export default function App(){
   }
   function onPointerMove(e:ReactPointerEvent<SVGSVGElement>){
     const p=pointFromEvent(e);setHover(p);
+    if(marqueeRef.current){setMarquee({a:marqueeRef.current.start,b:p});return;}
+    const md=moveDragRef.current;
+    if(md){
+      let dx=p.x-md.start.x,dy=p.y-md.start.y;
+      if(!md.pushed){if(Math.hypot(dx,dy)*zoomRef.current<3)return;pushHistory();md.pushed=true;}
+      if(e.shiftKey){if(Math.abs(dx)>Math.abs(dy))dy=0;else dx=0;} // Shift: straight horizontal or vertical
+      md.dx=dx;md.dy=dy;
+      setRooms(v=>v.map(r=>{const o=md.orig.get(r.id);return o?translateRoom(o,dx,dy):r;}));
+      setMessage(`Moving ${md.ids.length} room${md.ids.length===1?'':'s'}: ${fmtMove(dx,dy)}. Hold Shift for straight moves.`);
+      return;
+    }
     const wd=edgeDragRef.current;
     if(wd){
       let d=(p.x-wd.start.x)*wd.normal.x+(p.y-wd.start.y)*wd.normal.y;
@@ -907,6 +980,9 @@ export default function App(){
     if(press.dragging)setRectEnd(p);
   }
   function onPointerCancel(){
+    marqueeRef.current=null;setMarquee(null);
+    const md=moveDragRef.current;
+    if(md){moveDragRef.current=null;if(md.pushed)setRooms(v=>v.map(r=>md.orig.get(r.id)??r));}
     const wd=edgeDragRef.current;
     if(wd){edgeDragRef.current=null;if(wd.pushed)setRooms(v=>v.map(r=>r.id===wd.roomId?withRing(r,wd.ring,wd.startRing):r));}
     const ed=equipDragRef.current;
@@ -915,6 +991,26 @@ export default function App(){
   }
   function onPointerUp(e:ReactPointerEvent<SVGSVGElement>){
     if(labelDragRef.current){labelDragRef.current=null;return;}
+    const mq=marqueeRef.current;
+    if(mq){
+      marqueeRef.current=null;setMarquee(null);
+      const b=pointFromEvent(e);
+      if(dist(mq.start,b)*zoomRef.current<4){if(!mq.add)setSelectedId(null);return;} // plain click on empty space
+      const box={x0:Math.min(mq.start.x,b.x),y0:Math.min(mq.start.y,b.y),x1:Math.max(mq.start.x,b.x),y1:Math.max(mq.start.y,b.y)};
+      const windowMode=b.x>=mq.start.x; // left→right: fully inside; right→left: touching
+      const hits=rooms.filter(r=>windowMode?r.points.every(q=>inRect(q,box)):ringTouchesRect(r.points,box)).map(r=>r.id);
+      const ids=mq.add?[...selIds,...hits.filter(id=>!selIds.includes(id))]:hits;
+      setSelection(ids,ids[ids.length-1]??null);
+      setMessage(ids.length?`${ids.length} room${ids.length===1?'':'s'} selected. Drag any of them, or use the arrow keys, to move them together.`:'Nothing selected.');
+      return;
+    }
+    const md=moveDragRef.current;
+    if(md){
+      moveDragRef.current=null;
+      if(!md.pushed){if(md.collapse)setSelectedId(md.clicked);return;} // a click inside a multi-selection picks that room
+      setMessage(`Moved ${md.ids.length} room${md.ids.length===1?'':'s'} ${fmtMove(md.dx,md.dy)}. Ctrl/Cmd+Z to undo.`);
+      return;
+    }
     const wd=edgeDragRef.current;
     if(wd){edgeDragRef.current=null;
       if(wd.pushed){const r=rooms.find(x=>x.id===wd.roomId),a=r?mOf(r).area:null;
@@ -1033,7 +1129,9 @@ export default function App(){
         <IconBtn tip="Save as…" onClick={()=>void saveProject(true)}><SaveAll size={17}/></IconBtn>
       </div></div>
       <div className="hvac-group"><span className="hvac-group-label">PDF</span><div className="hvac-group-items">
-        <IconBtn tip="Import PDF" onClick={()=>fileRef.current?.click()}><Upload size={17}/></IconBtn>
+        <IconBtn tip="Import PDF (new takeoff)" onClick={()=>fileRef.current?.click()}><Upload size={17}/></IconBtn>
+        <input ref={replaceRef} type="file" accept=".pdf,application/pdf" onChange={replacePdf} hidden/>
+        <IconBtn tip="Replace background PDF (keeps rooms)" disabled={!pdf} onClick={()=>replaceRef.current?.click()}><RefreshCw size={17}/></IconBtn>
         <select className="hvac-scale-select" title="Drawing scale" aria-label="Drawing scale" value={scale} onChange={e=>{const v=e.target.value;setScale(v);e.currentTarget.blur();if(v==='custom')switchTool('calibrate');}}>{scales.map(([value,label])=><option key={value} value={value}>{label}</option>)}</select>
         <IconBtn tip={`Calibrate scale (${sc('calibrate')})`} active={tool==='calibrate'} onClick={()=>switchTool('calibrate')}><Ruler size={17}/></IconBtn>
         <label className="hvac-opacity" data-tip="PDF opacity"><Eye size={16}/><input type="range" min={10} max={100} step={5} value={Math.round(settings.pdfOpacity*100)} aria-label="PDF opacity" onChange={e=>setSettings(st=>({...st,pdfOpacity:Number(e.target.value)/100}))} onPointerUp={e=>e.currentTarget.blur()}/><span>{Math.round(settings.pdfOpacity*100)}%</span></label>
@@ -1064,7 +1162,8 @@ export default function App(){
     <div className="hvac-content">
       <SidePanel side="left" title="Rooms" open={settings.leftOpen} onToggle={()=>setSettings(st=>({...st,leftOpen:!st.leftOpen}))}>
         <div className="hvac-roomlist">
-          {rooms.length===0?<p className="hvac-muted">No rooms drawn yet. Press {sc('draw')} to draw one.</p>:rooms.map(r=>{const a=roomArea(r);return <button key={r.id} className={`hvac-room ${selectedId===r.id?'active':''}`} onClick={()=>{setSelectedId(r.id);setTool('select');}}><strong>{roomHasIssue(mOf(r))&&<span className="hvac-issue-dot" title="Outdoor air, cooling or heating doesn't meet the requirement"/>}{r.name}</strong><span>{a===null?'Unscaled':`${fmt(a)} SF`}</span></button>;})}
+          {rooms.length===0?<p className="hvac-muted">No rooms drawn yet. Press {sc('draw')} to draw one.</p>:rooms.map(r=>{const a=roomArea(r);return <button key={r.id} className={`hvac-room ${selIds.includes(r.id)?'active':''}`} title="Shift- or Ctrl-click to add to the selection" onClick={ev=>{setTool('select');
+            if(ev.shiftKey||ev.ctrlKey||ev.metaKey){const ids=selIds.includes(r.id)?selIds.filter(x=>x!==r.id):[...selIds,r.id];setSelection(ids,ids.includes(r.id)?r.id:ids[ids.length-1]??null);}else setSelectedId(r.id);}}><strong>{roomHasIssue(mOf(r))&&<span className="hvac-issue-dot" title="Outdoor air, cooling or heating doesn't meet the requirement"/>}{r.name}</strong><span>{a===null?'Unscaled':`${fmt(a)} SF`}</span></button>;})}
         </div>
         {rooms.length>0&&feetPerPoint!==null&&(()=>{const tot=rooms.reduce((t,r)=>t+(roomArea(r)??0),0);
           const ms=rooms.map(mOf),oa=ms.reduce((t,m)=>t+(m.voz??0),0),prov=ms.reduce((t,m)=>t+m.oa,0);
@@ -1078,8 +1177,8 @@ export default function App(){
               <canvas ref={detailRef} className="hvac-detail" style={{opacity:settings.pdfOpacity}}/>
               <svg ref={svgRef} viewBox={`0 0 ${pageSize.width} ${pageSize.height}`} width={pageSize.width} height={pageSize.height} onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp} onPointerCancel={onPointerCancel} onDoubleClick={e=>{if((tool==='draw'||tool==='cutout')&&draftRef.current.length>=3){e.preventDefault();finishRoom();}}} onContextMenu={e=>e.preventDefault()} style={{cursor:tool==='select'?'default':tool==='equip'?'copy':'crosshair'}}>
                 <rect data-layer="background" width={pageSize.width} height={pageSize.height} fill="transparent"/>
-                {rooms.map(room=><g key={room.id} onPointerDown={e=>{if(tool!=='select')return;e.stopPropagation();setSelectedId(room.id);}} style={{pointerEvents:tool==='select'?'auto':'none'}}>
-                  <path d={[room.points,...cutoutsOf(room)].map(ringPath).join('')} fillRule="evenodd" fill={room.id===selectedId?'#3b82f6':'#22c55e'} fillOpacity={room.id === selectedId ? 0.24 : 0.14} stroke={room.id===selectedId?'#2563eb':'#16a34a'} strokeWidth={2/zoom}/>
+                {rooms.map(room=><g key={room.id} onPointerDown={e=>startRoomDrag(e,room)} style={{pointerEvents:tool==='select'?'auto':'none'}}>
+                  <path d={[room.points,...cutoutsOf(room)].map(ringPath).join('')} fillRule="evenodd" fill={selIds.includes(room.id)?'#3b82f6':'#22c55e'} fillOpacity={room.id === selectedId ? 0.24 : 0.14} stroke={selIds.includes(room.id)?'#2563eb':'#16a34a'} strokeWidth={2/zoom}/>
                   {cutoutsOf(room).map((c,k)=><path key={k} d={ringPath(c)} fill="none" stroke="#dc2626" strokeWidth={1.5/zoom} strokeDasharray={`${5/zoom} ${3/zoom}`} pointerEvents="none"/>)}
                 </g>)}
                 {tool==='select'&&edgeA&&edgeB&&<g pointerEvents="none">
@@ -1121,6 +1220,9 @@ export default function App(){
                 {tool==='equip'&&hover&&(()=>{const g=newEquip(placeType),{w,h}=symbolPt(g),ok=!!roomAt(hover),c=ok?styleOf(placeType).color:'#dc2626';
                   return <g pointerEvents="none" opacity={.6}><rect x={hover.x-w/2} y={hover.y-h/2} width={w} height={h} fill={c} fillOpacity={.15} stroke={c} strokeWidth={1.5/zoom} strokeDasharray={`${4/zoom} ${3/zoom}`}/>
                     {g.method==='oa'&&<path d={`M${hover.x-w/2},${hover.y-h/2}L${hover.x+w/2},${hover.y+h/2}M${hover.x+w/2},${hover.y-h/2}L${hover.x-w/2},${hover.y+h/2}`} stroke={c} strokeWidth={1/zoom}/>}</g>;})()}
+                {marquee&&(()=>{const win=marquee.b.x>=marquee.a.x,c=win?'#2563eb':'#16a34a';
+                  return <rect x={Math.min(marquee.a.x,marquee.b.x)} y={Math.min(marquee.a.y,marquee.b.y)} width={Math.abs(marquee.b.x-marquee.a.x)} height={Math.abs(marquee.b.y-marquee.a.y)}
+                    fill={c} fillOpacity={.08} stroke={c} strokeWidth={1/zoom} strokeDasharray={win?undefined:`${5/zoom} ${3/zoom}`} pointerEvents="none"/>;})()}
                 {rectPreview&&<polygon points={rectPreview.map(p=>`${p.x},${p.y}`).join(' ')} fill={drawColor} fillOpacity={.12} stroke={drawColor} strokeWidth={2/zoom} strokeDasharray={`${5/zoom} ${4/zoom}`} pointerEvents="none"/>}
                 {draft.length>0&&<><polyline points={[...draft,...(previewPoint?[previewPoint]:[])].map(p=>`${p.x},${p.y}`).join(' ')} fill="none" stroke={drawColor} strokeWidth={2/zoom} strokeDasharray={`${6/zoom} ${4/zoom}`} pointerEvents="none"/>{draft.map((p,i)=><circle key={i} cx={p.x} cy={p.y} r={(i===0?10:3)/zoom} fill={i===0?'#f59e0b':drawColor} pointerEvents="none"/>)}</>}
                 {calPoints.map((p,i)=><circle key={i} cx={p.x} cy={p.y} r={5/zoom} fill="#ef4444" pointerEvents="none"/>)}
@@ -1134,7 +1236,7 @@ export default function App(){
           {pdf&&pdf.numPages>1&&<div className="hvac-row"><span>PDF page</span><select value={pageNumber} onChange={e=>{const next=Number(e.target.value);e.currentTarget.blur();if(next===pageNumber)return;if(rooms.length&&!window.confirm('Switching PDF pages currently clears room takeoffs. Save your project first. Continue?'))return;setPageNumber(next);setRooms([]);setDraft([]);setSelectedId(null);}}>{Array.from({length:pdf.numPages},(_,i)=><option key={i} value={i+1}>{i+1}</option>)}</select></div>}
           <div className="hvac-field"><label>Site altitude (ft)</label><NumField value={altitudeFt} onChange={setAltitudeFt}/>
             <div className="hvac-muted hvac-load-eq">Sensible heat factor {sensibleFactor(altitudeFt).toFixed(3)} BTU/h·cfm·°F (1.08 at sea level)</div></div>
-          {selected&&<>
+          {selected&&selIds.length<=1&&<>
             <div className="hvac-subhead">{selected.name}</div>
             <div className="hvac-field"><label>Label size (pt)</label><div className="hvac-inline"><NumField value={selected.labelSize??DEFAULT_LABEL_SIZE} min={2} onChange={v=>updateRoom({labelSize:Math.min(72,v)})}/>
               <button className="hvac-btn" title="Put the label back in its automatic position" disabled={!selected.labelPos} onClick={()=>{pushHistory();updateRoom({labelPos:null});}}>Reset position</button></div></div>
@@ -1148,12 +1250,24 @@ export default function App(){
           <p className="hvac-muted" style={{marginTop:12}}>Verify the printed scale against a known dimension before relying on areas. Controls and shortcuts are listed in{' '}
             <button className="hvac-linkbtn" style={{padding:0}} onClick={()=>{setSettingsOpen(true);setCaptureNote('');}}>Settings</button>.</p>
         </Section>
-        {!selected&&<p className="hvac-muted hvac-pad">Select a room to see its properties.</p>}
+        {!selected&&<p className="hvac-muted hvac-pad">Select a room to see its properties. Shift-click or drag a box to select several.</p>}
+        {selIds.length>1&&(()=>{const list=rooms.filter(r=>selIds.includes(r.id)),ms=list.map(mOf),tot=ms.reduce((t,m)=>t+(m.area??0),0),eq=list.reduce((t,r)=>t+r.equipment.length,0);
+          return <section className="hvac-sec open"><div className="hvac-sec-head" style={{cursor:'default'}}><span>Selection</span><span className="hvac-sec-aside">{list.length} rooms</span></div>
+            <div className="hvac-sec-body">
+              <div className="hvac-area-card">
+                <div><strong>{list.length}</strong><span>Rooms</span></div>
+                <div><strong>{feetPerPoint===null?'—':fmt(tot)}</strong><span>Net SF</span></div>
+                <div><strong>{eq}</strong><span>Equipment</span></div>
+              </div>
+              <div className="hvac-sel-list">{list.map(r=><button key={r.id} className="hvac-sel-chip" title="Remove from selection" onClick={()=>{const ids=selIds.filter(x=>x!==r.id);setSelection(ids,ids[ids.length-1]??null);}}>{r.name} <X size={11}/></button>)}</div>
+              <p className="hvac-muted">Drag any selected room to move them all, or use the arrow keys (1", Shift 1'-0"). Hold Shift while dragging for a straight move. Esc clears the selection.</p>
+              <button className="hvac-btn danger" style={{width:'100%'}} onClick={deleteRoom}><Trash2 size={15}/> Delete {list.length} rooms</button>
+            </div></section>;})()}
         {selected&&selectedEdge&&edgeLen!==null&&tool==='select'&&<Section title={selectedEdge.ring<0?'Selected Wall':`Cutout ${selectedEdge.ring+1} Wall`} open={secOpen('wall')} onToggle={()=>toggleSec('wall')}>
           <div className="hvac-row"><span>Length</span><strong>{feetPerPoint===null?`${fmt(edgeLen)} pts`:fmtFeet(edgeLen*feetPerPoint)}</strong></div>
           <p className="hvac-muted">Arrow keys move this wall 1" (Shift: 1'-0"). Neighbouring walls stretch to follow and keep their angles. Esc deselects.</p>
         </Section>}
-        {selected&&(()=>{const m=mOf(selected),net=m.area,occ=m.occupants,vbz=m.vbz,loadW=m.loadW,totalW=m.totalW;
+        {selected&&selIds.length<=1&&(()=>{const m=mOf(selected),net=m.area,occ=m.occupants,vbz=m.vbz,loadW=m.loadW,totalW=m.totalW;
           const tpl=findTemplate(selected.template);
           const tag=(match:boolean)=><div className={`hvac-tpl-tag${tpl&&match?'':' custom'}`}>Template: <strong>{tpl&&match?tpl.name:'Custom'}</strong></div>;
           const cfm=(v:number|null)=>v===null?'—':`${fmt(v)} cfm`;
@@ -1330,7 +1444,7 @@ export default function App(){
           <div className="hvac-fixed">
             <span>Draw ({sc('draw')})</span><span>Drag for a rectangle, or click corners for a polygon. Close by clicking the first corner, double-clicking, or Enter.</span>
             <span>Cutout ({sc('cutout')})</span><span>Same as Draw; the shape is removed from the room it sits in.</span>
-            <span>Select ({sc('select')})</span><span>Click a room, label, wall or piece of equipment. Drag a wall to move it, drag a label or its corner handle to move or resize it.</span>
+            <span>Select ({sc('select')})</span><span>Click a room, label, wall or piece of equipment. Drag a room to move it (with its equipment), a wall to resize, a label or its corner handle to move or resize it. Shift/Ctrl-click adds rooms to the selection. Drag on empty space to box-select: left→right picks rooms fully inside, right→left picks anything the box touches.</span>
             <span>Equipment ({sc('equip')})</span><span>Click inside a room to place. Drag a symbol to move it, even into another room.</span>
             <span>Wheel</span><span>Zoom</span>
             <span>{sc('fit')}</span><span>Fit page</span>
@@ -1363,9 +1477,11 @@ export default function App(){
             <span>Enter</span><span>Finish polygon</span>
             <span>Backspace</span><span>Remove last corner / selected cutout</span>
             <span>Delete</span><span>Delete selected equipment, cutout or room</span>
+            <span>Ctrl/Cmd + A</span><span>Select all rooms</span>
+            <span>Shift (while dragging)</span><span>Move straight horizontally or vertically</span>
             <span>Ctrl/Cmd + D</span><span>Duplicate selected equipment</span>
             <span>Ctrl/Cmd + C / V</span><span>Copy equipment / paste into the room under the cursor</span>
-            <span>Esc</span><span>Cancel drawing / deselect wall</span>
+            <span>Esc</span><span>Cancel drawing, deselect a wall, then clear the selection</span>
             <span>Ctrl/Cmd + Z</span><span>Undo</span>
             <span>Ctrl/Cmd + S</span><span>Save project</span>
           </div>
