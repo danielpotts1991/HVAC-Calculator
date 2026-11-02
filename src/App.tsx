@@ -3,370 +3,32 @@ import type { ReactNode } from 'react';
 import type { ChangeEvent, PointerEvent as ReactPointerEvent, WheelEvent as ReactWheelEvent } from 'react';
 import * as pdfjsLib from 'pdfjs-dist';
 import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
-import { Upload, MousePointer2, PenTool, Ruler, Trash2, Undo2, ZoomIn, ZoomOut, Download, FileText, Maximize, Save, FolderOpen, SaveAll, Scissors, Magnet, Settings, Eye, X, ChevronRight, ChevronsLeft, ChevronsRight, Plus, ClipboardList, Check, AirVent, Copy, RotateCw, RefreshCw } from 'lucide-react';
+import { Upload, MousePointer2, PenTool, Ruler, Trash2, Undo2, ZoomIn, ZoomOut, Download, FileText, Maximize, Save, FolderOpen, SaveAll, Scissors, Magnet, Settings, Eye, X, ChevronRight, ClipboardList, Check, AirVent, RefreshCw, Layers as LayersIcon, LayoutList, Package, Droplets } from 'lucide-react';
 import './App.css';
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = workerUrl;
-import { type Point, type Room, type OccUnit, type LoadUnit, type Equip, type RoomTemplate, OCC_UNITS, LOAD_UNITS, EQUIP_TYPES, OA_DIFFUSER, newEquip, equipType, equipSize, equipSupply, BTUH_PER_W, DEFAULT_LABEL_SIZE,
-  areaPx, cutoutsOf, netAreaPx, fmt, tidy, newId, normalizeRoom, metrics, sensibleFactor, roomHasIssue, BUILTIN_TEMPLATES, applyTemplate, templateFromRoom,
-  ashraeMatches, loadsMatch, COLUMNS, type ReportTemplate } from './rooms';
+import { type Point, type Room, type Equip, EQUIP_TYPES, OA_DIFFUSER, newEquip, equipType, equipSize, equipSupply, DEFAULT_LABEL_SIZE,
+  areaPx, cutoutsOf, netAreaPx, fmt, fmtFu, tidy, newId, normalizeRoom, metrics, sensibleFactor, type Env, type LibItem, normalizeLibrary, roomHasIssue, BUILTIN_TEMPLATES, applyTemplate, templateFromRoom,
+  COLUMNS } from './rooms';
 import Reports from './Reports';
+import RoomTable from './RoomTable';
+import EquipmentLibrary from './EquipmentLibrary';
+import PlumbingLibrary from './PlumbingLibrary';
+import Libraries, { type LibTab } from './Libraries';
+import { REFERENCE_FILES, referenceIssues, verifiedCount } from './reference';
+import { type FixtureType, type PlacedFixture, normalizeFixtureTypes } from './plumbing';
+import { FixtureSymbol, SymbolPreview } from './symbols';
+const FIXTURE_STYLE='Plumbing fixtures'; // key in settings.equipStyle
+import { dist, scales, scaleFeetPerPoint, snapDirection, closeSnapped, isSimplePolygon, pointInRing, ringInside, ringsOverlap, edgeNormal, offsetEdge, offsetEdgeBy, inRect, ringTouchesRect, ringPath, fmtFeet } from './geometry';
+import { labelPoint, labelObstacle, equipRadiusFt, equipObstacles, freeSpot, placeMissingEquipment, translateRoom } from './plan';
+import { type Tool, type Action, type AppSettings, ACTIONS, DEFAULT_SHORTCUTS, RESERVED_KEYS, keyLabel, DEFAULT_EQUIP_OPACITY, SETTINGS_KEY, loadSettings, isTyping } from './settings';
+import { NumField, Section, SidePanel, IconBtn } from './ui';
+import { MODULES, moduleById, type ModuleCtx, type ModuleId } from './modules';
 
-// Numeric input that lets you type freely ("0.", "", "1e") and only commits valid numbers.
-function NumField({ value, onChange, step = 'any', min = 0, disabled, invalid, title }: { value: number; onChange: (v: number) => void; step?: string; min?: number; disabled?: boolean; invalid?: boolean; title?: string }) {
-  const [text, setText] = useState(String(tidy(value)));
-  const focused = useRef(false);
-  // Show outside changes (unit switch, solved value, undo) even while focused, but never
-  // overwrite a half-typed entry like "-" or "0." that doesn't parse yet.
-  useEffect(() => {
-    setText(t => { const n = Number(t); return !focused.current || (t !== '' && Number.isFinite(n) && tidy(n) !== tidy(value)) ? String(tidy(value)) : t; });
-  }, [value]);
-  return <input type="number" step={step} min={min} disabled={disabled} value={text} className={invalid ? 'bad' : undefined} title={title} aria-invalid={invalid || undefined}
-    onFocus={() => { focused.current = true; }}
-    onBlur={() => { focused.current = false; setText(String(tidy(value))); }}
-    onChange={e => { setText(e.target.value); const n = Number(e.target.value); if (e.target.value !== '' && Number.isFinite(n)) onChange(Math.max(min, n)); }} />;
-}
-// Collapsible section with a disclosure arrow.
-function Section({ title, open, onToggle, children, aside, nested }: { title: string; open: boolean; onToggle: () => void; children: ReactNode; aside?: ReactNode; nested?: boolean }) {
-  return <section className={`hvac-sec${open ? ' open' : ''}${nested ? ' nested' : ''}`}>
-    <button className="hvac-sec-head" onClick={onToggle} aria-expanded={open}>
-      <ChevronRight size={14} className="hvac-chev" /><span>{title}</span>{aside && <span className="hvac-sec-aside">{aside}</span>}
-    </button>
-    {open && <div className="hvac-sec-body">{children}</div>}
-  </section>;
-}
-// Side bar that collapses to a thin vertical tab (Bluebeam-style).
-function SidePanel({ side, title, open, onToggle, children }: { side: 'left' | 'right'; title: string; open: boolean; onToggle: () => void; children: ReactNode }) {
-  const CloseIcon = side === 'left' ? ChevronsLeft : ChevronsRight;
-  if (!open) return <aside className={`hvac-side hvac-side-${side} collapsed`}>
-    <button className="hvac-side-tab" onClick={onToggle} title={`Show ${title}`}>{side === 'left' ? <ChevronsRight size={15} /> : <ChevronsLeft size={15} />}<span>{title}</span></button>
-  </aside>;
-  return <aside className={`hvac-side hvac-side-${side}`}>
-    <div className="hvac-side-head"><span>{title}</span><button className="hvac-btn icon-only" title={`Hide ${title}`} onClick={onToggle}><CloseIcon size={15} /></button></div>
-    <div className="hvac-side-body">{children}</div>
-  </aside>;
-}
-type Tool = 'select' | 'draw' | 'cutout' | 'equip' | 'calibrate';
-
-// ---- Keyboard shortcuts (rebindable in Settings, saved in this browser) ----
-type Action = 'select' | 'draw' | 'cutout' | 'equip' | 'calibrate' | 'fit' | 'snap';
-const ACTIONS: { id: Action; label: string; key: string }[] = [
-  { id: 'select', label: 'Select tool', key: 's' },
-  { id: 'draw', label: 'Draw room tool', key: 'r' },
-  { id: 'cutout', label: 'Cutout tool', key: 'c' },
-  { id: 'equip', label: 'Place equipment tool', key: 'e' },
-  { id: 'calibrate', label: 'Calibrate scale', key: 'k' },
-  { id: 'fit', label: 'Fit page to window', key: 'f' },
-  { id: 'snap', label: 'Toggle 15° snap', key: 'g' },
-];
-type Shortcuts = Record<Action, string>;
-const DEFAULT_SHORTCUTS = Object.fromEntries(ACTIONS.map(a => [a.id, a.key])) as Shortcuts;
-// Keys with fixed meanings that can't be reassigned.
-const RESERVED_KEYS = ['escape', 'enter', 'backspace', 'delete', 'tab', ' ', 'arrowup', 'arrowdown', 'arrowleft', 'arrowright', 'shift', 'control', 'alt', 'meta'];
-const keyLabel = (k: string) => !k ? '—' : k.length === 1 ? k.toUpperCase() : k;
-type AppSettings = { shortcuts: Shortcuts; pdfOpacity: number; leftOpen: boolean; rightOpen: boolean; sections: Record<string, boolean>; roomTemplates: RoomTemplate[]; reports: ReportTemplate[];
-  equipStyle: Record<string, { color: string; opacity: number }> }; // per equipment type: symbol colour and fill opacity
-const DEFAULT_EQUIP_OPACITY = 0.15;
-const DEFAULT_SECTIONS: Record<string, boolean> = { drawing: false, wall: true, room: true, ashrae: true, airflow: true, loads: true, hvac: true };
-const SETTINGS_KEY = 'hvac-studio-settings';
-function loadSettings(): AppSettings {
-  try {
-    const raw = JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}');
-    return { shortcuts: { ...DEFAULT_SHORTCUTS, ...(raw.shortcuts || {}) }, pdfOpacity: typeof raw.pdfOpacity === 'number' ? raw.pdfOpacity : 1,
-      leftOpen: raw.leftOpen ?? true, rightOpen: raw.rightOpen ?? true, sections: { ...DEFAULT_SECTIONS, ...(raw.sections || {}) },
-      roomTemplates: Array.isArray(raw.roomTemplates) ? raw.roomTemplates : [], reports: Array.isArray(raw.reports) ? raw.reports : [],
-      equipStyle: raw.equipStyle && typeof raw.equipStyle === 'object' ? raw.equipStyle : {} };
-  } catch { return { shortcuts: { ...DEFAULT_SHORTCUTS }, pdfOpacity: 1, leftOpen: true, rightOpen: true, sections: { ...DEFAULT_SECTIONS }, roomTemplates: [], reports: [], equipStyle: {} }; }
-}
-// True when the key press belongs to a text/number field rather than the app.
-const isTyping = (t: EventTarget | null) =>
-  t instanceof HTMLTextAreaElement || t instanceof HTMLSelectElement ||
-  (t instanceof HTMLInputElement && !['range', 'checkbox', 'button'].includes(t.type));
-
-// Capacity vs. load bar for the equipment summary.
-function Meter({ label, have, need, short }: { label: string; have: number; need: number | null; short: boolean }) {
-  const pct = need && need > 0 ? Math.min(100, Math.max(0, have / need * 100)) : have > 0 ? 100 : 0;
-  return <div className="hvac-meter">
-    <div className="hvac-meter-top"><span>{label}</span><strong className={short ? 'hvac-bad-text' : undefined}>
-      {Math.round(have).toLocaleString()}{need !== null && need > 0 ? ` / ${Math.round(need).toLocaleString()}` : ''} BTU/h</strong></div>
-    <div className="hvac-meter-bar"><div className={short ? 'bad' : need && need > 0 ? 'ok' : ''} style={{ width: `${pct}%` }} /></div>
-  </div>;
-}
-// Icon-only toolbar button; its name appears in a tooltip on hover.
-function IconBtn({ tip, active, disabled, onClick, children }: { tip: string; active?: boolean; disabled?: boolean; onClick: () => void; children: ReactNode }) {
-  return <button className={`hvac-btn icon-only${active ? ' active' : ''}`} data-tip={tip} aria-label={tip} disabled={disabled} onClick={onClick}>{children}</button>;
-}
 type EdgeSel = { ring: number; index: number }; // ring -1 = room outline, k = cutout k
-
-// Shared geometry and architectural-scale utilities.
-const dist = (a: Point, b: Point) => Math.hypot(a.x - b.x, a.y - b.y);
-const scales = [
-  ['1/16', '1/16" = 1\'-0"'],
-  ['1/8', '1/8" = 1\'-0"'],
-  ['3/16', '3/16" = 1\'-0"'],
-  ['1/4', '1/4" = 1\'-0"'],
-  ['3/8', '3/8" = 1\'-0"'],
-  ['1/2', '1/2" = 1\'-0"'],
-  ['custom', 'Custom calibration'],
-] as const;
-const scaleFeetPerPoint = (scale: string): number => {
-  const [numerator, denominator] = scale.split('/').map(Number);
-  const inchesPerFoot = denominator ? numerator / denominator : numerator;
-  return 1 / (72 * inchesPerFoot);
-};
-
-// Direction constraints are applied to geometry, not to a grid.
-// The first vertex is the fixed anchor; later vertices are adjusted.
-const STEP = Math.PI / 12;
-function snapDirection(a: Point, raw: Point): Point {
-  const dx = raw.x - a.x, dy = raw.y - a.y;
-  const theta = Math.round(Math.atan2(dy, dx) / STEP) * STEP;
-  const ux = Math.cos(theta), uy = Math.sin(theta);
-  // Project onto the snapped direction: this keeps horizontal/vertical edges
-  // aligned without increasing their length when the mouse is slightly off.
-  const length = Math.max(0, dx * ux + dy * uy);
-  return { x: a.x + length * ux, y: a.y + length * uy };
-}
-function cross(a: Point, b: Point) { return a.x * b.y - a.y * b.x; }
-function segmentIntersection(a: Point, ad: Point, b: Point, bd: Point): Point | null {
-  const det = cross(ad, bd);
-  if (Math.abs(det) < 1e-7) return null;
-  const t = cross({ x: b.x - a.x, y: b.y - a.y }, bd) / det;
-  return { x: a.x + t * ad.x, y: a.y + t * ad.y };
-}
-// Close-snap: slide ONLY the last vertex along its incoming wall so the
-// closing edge (last -> first) lands on a 15-degree multiple. The first
-// vertex and every other corner stay fixed.
-// Tries the two nearest 15-degree directions and keeps whichever moves the
-// last vertex the least while still producing a valid polygon.
-// Returns null if no valid adjustment exists (caller keeps the raw points).
-function closeSnapped(points: Point[]): Point[] | null {
-  const n = points.length;
-  if (n < 3) return null;
-  const first = points[0], previous = points[n - 2], last = points[n - 1];
-  const incoming = { x: last.x - previous.x, y: last.y - previous.y };
-  const len2 = incoming.x * incoming.x + incoming.y * incoming.y;
-  if (len2 < 1e-9) return null;
-
-  const base = Math.atan2(first.y - last.y, first.x - last.x) / STEP;
-  const steps = Array.from(new Set([Math.floor(base), Math.ceil(base)]));
-  let best: Point[] | null = null, bestMove = Infinity;
-  for (const k of steps) {
-    const dir = { x: Math.cos(k * STEP), y: Math.sin(k * STEP) };
-    const hit = segmentIntersection(previous, incoming, first, dir);
-    if (!hit || !Number.isFinite(hit.x) || !Number.isFinite(hit.y)) continue; // parallel
-    // Don't reverse or collapse the incoming wall.
-    const t = ((hit.x - previous.x) * incoming.x + (hit.y - previous.y) * incoming.y) / len2;
-    if (t <= 0.05) continue;
-    // Closing edge must actually head from the new corner toward the first corner.
-    if ((first.x - hit.x) * dir.x + (first.y - hit.y) * dir.y <= 1e-6) continue;
-    const candidate = [...points.slice(0, -1).map(p => ({ ...p })), hit];
-    if (!isSimplePolygon(candidate)) continue;
-    const move = dist(hit, last);
-    if (move < bestMove) { bestMove = move; best = candidate; }
-  }
-  return best;
-}
-
-function isSimplePolygon(points: Point[]): boolean {
-  if (points.length < 3 || areaPx(points) < 1) return false;
-  const n = points.length;
-  function intersects(a: Point, b: Point, c: Point, d: Point) {
-    const ab = { x: b.x - a.x, y: b.y - a.y };
-    const cd = { x: d.x - c.x, y: d.y - c.y };
-    const denom = cross(ab, cd);
-    if (Math.abs(denom) < 1e-8) return false;
-    const ac = { x: c.x - a.x, y: c.y - a.y };
-    const t = cross(ac, cd) / denom, u = cross(ac, ab) / denom;
-    return t > 1e-6 && t < 1 - 1e-6 && u > 1e-6 && u < 1 - 1e-6;
-  }
-  for (let i = 0; i < n; i++) for (let j = i + 1; j < n; j++) {
-    if (j === i + 1 || (i === 0 && j === n - 1)) continue;
-    if (intersects(points[i], points[(i + 1) % n], points[j], points[(j + 1) % n])) return false;
-  }
-  return true;
-}
-
-// ---- Rings, cutouts and edge editing ----
-// A "ring" is a closed list of points. Ring -1 is a room's outline; ring k >= 0 is cutout k.
-function properCross(a: Point, b: Point, c: Point, d: Point) {
-  const ab = { x: b.x - a.x, y: b.y - a.y }, cd = { x: d.x - c.x, y: d.y - c.y };
-  const denom = cross(ab, cd);
-  if (Math.abs(denom) < 1e-8) return false;
-  const ac = { x: c.x - a.x, y: c.y - a.y };
-  const t = cross(ac, cd) / denom, u = cross(ac, ab) / denom;
-  return t > 1e-6 && t < 1 - 1e-6 && u > 1e-6 && u < 1 - 1e-6;
-}
-function ringsCross(r1: Point[], r2: Point[]) {
-  for (let i = 0; i < r1.length; i++) for (let j = 0; j < r2.length; j++)
-    if (properCross(r1[i], r1[(i + 1) % r1.length], r2[j], r2[(j + 1) % r2.length])) return true;
-  return false;
-}
-function distToSegment(p: Point, a: Point, b: Point) {
-  const dx = b.x - a.x, dy = b.y - a.y, l2 = dx * dx + dy * dy;
-  const t = l2 ? Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / l2)) : 0;
-  return Math.hypot(p.x - a.x - t * dx, p.y - a.y - t * dy);
-}
-function onBoundary(p: Point, ring: Point[], tol = 0.5) {
-  return ring.some((a, i) => distToSegment(p, a, ring[(i + 1) % ring.length]) <= tol);
-}
-function pointInRing(p: Point, ring: Point[]) {
-  let inside = false;
-  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
-    const a = ring[i], b = ring[j];
-    if ((a.y > p.y) !== (b.y > p.y) && p.x < ((b.x - a.x) * (p.y - a.y)) / (b.y - a.y) + a.x) inside = !inside;
-  }
-  return inside;
-}
-// inner lies inside outer: no wall crossings, every corner inside or on the outline,
-// and every wall's midpoint inside (catches a shape that bridges across a notch).
-function ringInside(inner: Point[], outer: Point[]) {
-  if (ringsCross(inner, outer)) return false;
-  const ok = (p: Point) => pointInRing(p, outer) || onBoundary(p, outer);
-  return inner.every((p, i) => {
-    const q = inner[(i + 1) % inner.length];
-    return ok(p) && ok({ x: (p.x + q.x) / 2, y: (p.y + q.y) / 2 });
-  });
-}
-// A point guaranteed to be inside a ring (works for concave shapes too).
-function interiorPoint(r: Point[]): Point {
-  for (let i = 1; i < r.length - 1; i++) {
-    const c = { x: (r[0].x + r[i].x + r[i + 1].x) / 3, y: (r[0].y + r[i].y + r[i + 1].y) / 3 };
-    if (pointInRing(c, r) && !onBoundary(c, r, 1e-6)) return c;
-  }
-  return r[0];
-}
-// Two cutouts may touch but not overlap (identical or nested shapes count as overlap).
-function ringsOverlap(a: Point[], b: Point[]) {
-  if (ringsCross(a, b)) return true;
-  const strictlyIn = (p: Point, r: Point[]) => pointInRing(p, r) && !onBoundary(p, r);
-  return a.some(p => strictlyIn(p, b)) || b.some(p => strictlyIn(p, a))
-    || strictlyIn(interiorPoint(a), b) || strictlyIn(interiorPoint(b), a);
-}
-// Move edge i of a ring along its own normal. Its two corners slide along the
-// neighbouring walls, so those walls keep their angles (they just get longer/shorter).
-function edgeNormal(ring: Point[], i: number): Point | null {
-  const a = ring[i], b = ring[(i + 1) % ring.length], len = dist(a, b);
-  return len < 1e-9 ? null : { x: -(b.y - a.y) / len, y: (b.x - a.x) / len };
-}
-function offsetEdge(ring: Point[], i: number, arrow: Point, step: number): Point[] | null {
-  const normal = edgeNormal(ring, i);
-  if (!normal) return null;
-  const along = arrow.x * normal.x + arrow.y * normal.y;
-  if (Math.abs(along) < 0.3) return null; // arrow points along the wall: nothing to nudge
-  return offsetEdgeBy(ring, i, step * Math.sign(along));
-}
-// Move edge i a signed distance along its normal; its corners slide along the neighbouring walls.
-function offsetEdgeBy(ring: Point[], i: number, distance: number): Point[] | null {
-  const n = ring.length;
-  const a = ring[i], b = ring[(i + 1) % n];
-  const len = dist(a, b);
-  if (len < 1e-9) return null;
-  const d = { x: (b.x - a.x) / len, y: (b.y - a.y) / len };
-  const normal = { x: -d.y, y: d.x };
-  const off = { x: normal.x * distance, y: normal.y * distance };
-  const a2 = { x: a.x + off.x, y: a.y + off.y }, b2 = { x: b.x + off.x, y: b.y + off.y };
-  const prev = ring[(i - 1 + n) % n], next = ring[(i + 2) % n];
-  const newA = segmentIntersection(prev, { x: a.x - prev.x, y: a.y - prev.y }, a2, d) ?? a2;
-  const newB = segmentIntersection(next, { x: b.x - next.x, y: b.y - next.y }, b2, d) ?? b2;
-  // Refuse moves that run a neighbouring wall backwards past its far corner.
-  const fwd = (q: Point, from: Point, to: Point) => (q.x - from.x) * (to.x - from.x) + (q.y - from.y) * (to.y - from.y) > 1e-9;
-  if (!fwd(newA, prev, a) || !fwd(newB, next, b)) return null;
-  const out = ring.map(p => ({ ...p }));
-  out[i] = { x: newA.x, y: newA.y };
-  out[(i + 1) % n] = { x: newB.x, y: newB.y };
-  // ...or that turn the shape inside out.
-  const signed = (r: Point[]) => r.reduce((t, p, k) => { const q = r[(k + 1) % r.length]; return t + p.x * q.y - q.x * p.y; }, 0);
-  if (Math.sign(signed(out)) !== Math.sign(signed(ring))) return null;
-  return out;
-}
-// Label anchor: the sampled point inside the room's net area that is farthest from any
-// wall or cutout edge. For a plain rectangle that is the centre; with a cutout or a
-// room drawn inside the cutout, the label moves into the remaining floor area.
-function labelPoint(room: Room): Point {
-  const rings = [room.points, ...(room.cutouts ?? [])];
-  const xs = room.points.map(p => p.x), ys = room.points.map(p => p.y);
-  const minX = Math.min(...xs), maxX = Math.max(...xs), minY = Math.min(...ys), maxY = Math.max(...ys);
-  const N = 24;
-  const centre = { x: xs.reduce((a, b) => a + b, 0) / xs.length, y: ys.reduce((a, b) => a + b, 0) / ys.length };
-  const cands: { p: Point; d: number }[] = [];
-  for (let i = 0; i <= N; i++) for (let j = 0; j <= N; j++) {
-    const p = { x: minX + (maxX - minX) * (i + 0.5) / (N + 1), y: minY + (maxY - minY) * (j + 0.5) / (N + 1) };
-    if (!pointInRing(p, room.points) || (room.cutouts ?? []).some(c => pointInRing(p, c))) continue;
-    let d = Infinity;
-    for (const r of rings) for (let k = 0; k < r.length; k++) d = Math.min(d, distToSegment(p, r[k], r[(k + 1) % r.length]));
-    cands.push({ p, d });
-  }
-  if (!cands.length) return centre;
-  // Among the roomiest spots (within 10% of the best), take the one nearest the centre,
-  // so wide rooms get a centred label instead of the first equally-good spot found.
-  const bestD = Math.max(...cands.map(c => c.d));
-  return cands.filter(c => c.d >= bestD * 0.9).sort((u, v) => dist(u.p, centre) - dist(v.p, centre))[0].p;
-}
-// Things a new equipment symbol should keep clear of, each as a centre and radius (PDF points).
-type Obstacle = { p: Point; r: number };
-function labelObstacle(room: Room): Obstacle {
-  const size = room.labelSize ?? DEFAULT_LABEL_SIZE;
-  return { p: room.labelPos ?? labelPoint(room), r: Math.max(room.name.length, 9) * size * 0.3 + size * 0.5 };
-}
-// Clearance a symbol needs, in feet. OA diffusers carry their tag text below, wider than the square.
-const equipRadiusFt = (e: Equip) => Math.hypot(equipSize(e).w, equipSize(e).h) / 2 * (e.method === 'oa' ? 2.2 : 1);
-function equipObstacles(room: Room, ptPerFt: number, skip?: string): Obstacle[] {
-  return room.equipment.flatMap(e => e.pos && e.id !== skip ? [{ p: e.pos, r: equipRadiusFt(e) * ptPerFt }] : []);
-}
-// Roomiest spot for a symbol of radius selfR: clear of walls, the label and other equipment.
-function freeSpot(room: Room, obstacles: Obstacle[], selfR: number): Point {
-  const xs = room.points.map(p => p.x), ys = room.points.map(p => p.y);
-  const minX = Math.min(...xs), maxX = Math.max(...xs), minY = Math.min(...ys), maxY = Math.max(...ys);
-  const rings = [room.points, ...(room.cutouts ?? [])];
-  let best: Point | null = null, bestS = -Infinity; const N = 24;
-  for (let i = 0; i <= N; i++) for (let j = 0; j <= N; j++) {
-    const p = { x: minX + (maxX - minX) * (i + 0.5) / (N + 1), y: minY + (maxY - minY) * (j + 0.5) / (N + 1) };
-    if (!pointInRing(p, room.points) || (room.cutouts ?? []).some(c => pointInRing(p, c))) continue;
-    let s = Infinity;
-    for (const r of rings) for (let k = 0; k < r.length; k++) s = Math.min(s, distToSegment(p, r[k], r[(k + 1) % r.length]) - selfR * 0.75);
-    for (const o of obstacles) s = Math.min(s, dist(p, o.p) - o.r - selfR);
-    if (s > bestS) { bestS = s; best = p; }
-  }
-  return best ?? labelPoint(room);
-}
-// Give equipment from older project files a position on the plan.
-function placeMissingEquipment(list: Room[], ptPerFt: number): Room[] {
-  return list.map(r => {
-    if (!r.equipment.some(e => !e.pos)) return r;
-    let room = r;
-    for (const e of r.equipment) if (!e.pos) {
-      const pos = freeSpot(room, [labelObstacle(room), ...equipObstacles(room, ptPerFt)], equipRadiusFt(e) * ptPerFt);
-      room = { ...room, equipment: room.equipment.map(x => x.id === e.id ? { ...x, pos } : x) };
-    }
-    return room;
-  });
-}
-// Shift a room and everything attached to it (cutouts, label, equipment).
-function translateRoom(r: Room, dx: number, dy: number): Room {
-  const mv = (p: Point) => ({ x: p.x + dx, y: p.y + dy });
-  return { ...r, points: r.points.map(mv), cutouts: (r.cutouts ?? []).map(c => c.map(mv)), labelPos: r.labelPos ? mv(r.labelPos) : r.labelPos,
-    equipment: r.equipment.map(e => e.pos ? { ...e, pos: mv(e.pos) } : e) };
-}
-type Rect = { x0: number; y0: number; x1: number; y1: number };
-const inRect = (p: Point, b: Rect) => p.x >= b.x0 && p.x <= b.x1 && p.y >= b.y0 && p.y <= b.y1;
-// Crossing selection: the room touches the box at all.
-function ringTouchesRect(ring: Point[], b: Rect) {
-  if (ring.some(p => inRect(p, b))) return true;
-  const c = [{ x: b.x0, y: b.y0 }, { x: b.x1, y: b.y0 }, { x: b.x1, y: b.y1 }, { x: b.x0, y: b.y1 }];
-  if (c.some(p => pointInRing(p, ring))) return true;
-  return ringsCross(ring, c);
-}
-const ringPath = (r: Point[]) => 'M' + r.map(p => `${p.x},${p.y}`).join('L') + 'Z';
-const fmtFeet = (feet: number) => {
-  const totalIn = Math.round(feet * 12 * 4) / 4;
-  const ft = Math.floor(totalIn / 12), inch = totalIn - ft * 12;
-  const whole = Math.floor(inch), frac = ['', ' 1/4', ' 1/2', ' 3/4'][Math.round((inch - whole) * 4)];
-  return `${ft}'-${whole}${frac}"`;
-};
 const bytesToBase64=(bytes:Uint8Array)=>{let out='';for(let i=0;i<bytes.length;i+=8192)out+=String.fromCharCode(...bytes.subarray(i,i+8192));return btoa(out);};
 const base64ToBytes=(b64:string)=>Uint8Array.from(atob(b64),c=>c.charCodeAt(0));
-type ProjectFile={version:1;pdfName:string;pdfBase64:string|null;pageNumber:number;scale:string;customFeetPerPoint:number|null;altitudeFt?:number;rooms:Room[]};
+type ProjectFile={version:1;pdfName:string;pdfBase64:string|null;pageNumber:number;scale:string;customFeetPerPoint:number|null;altitudeFt?:number;peopleSensible?:number;library?:LibItem[];fixtureTypes?:FixtureType[];rooms:Room[]};
 type WritableHandle={name:string;createWritable:()=>Promise<{write:(data:string)=>Promise<void>;close:()=>Promise<void>}>};
 type FilePickerWindow=Window & {showSaveFilePicker?:(opts:object)=>Promise<WritableHandle>;showOpenFilePicker?:(opts:object)=>Promise<Array<{getFile:()=>Promise<File>;name:string}>>};
 export default function App(){
@@ -385,12 +47,17 @@ export default function App(){
   const [orthogonal,setOrthogonal]=useState(true);
   const [scale,setScale]=useState('1/8');
   const [customFeetPerPoint,setCustomFeetPerPoint]=useState<number|null>(null);
-  const [altitudeFt,setAltitudeFt]=useState(0); // project site altitude, corrects the 1.08 sensible factor
+  // Project-wide values (saved in the project file, edited in Settings > Project).
+  const [altitudeFt,setAltitudeFt]=useState(0);         // site altitude: corrects the 1.08 sensible factor
+  const [peopleSensible,setPeopleSensible]=useState(250); // BTU/h per person
+  const [library,setLibrary]=useState<LibItem[]>([]);     // heat-generating equipment library (custom equipment with parts)
+  const [fixtureTypes,setFixtureTypes]=useState<FixtureType[]>([]); // the project's plumbing fixture short list
   const [rooms,setRooms]=useState<Room[]>([]);
   const [draft,setDraft]=useState<Point[]>([]);
   const draftRef=useRef<Point[]>([]);
   useEffect(()=>{draftRef.current=draft;},[draft]);
   const [hover,setHover]=useState<Point|null>(null);
+  const hoverRef=useRef<Point|null>(null); // latest cursor position, without waiting for a render (used by paste)
   const [rectStart,setRectStart]=useState<Point|null>(null);
   const [rectEnd,setRectEnd]=useState<Point|null>(null);
   const [calPoints,setCalPoints]=useState<Point[]>([]);
@@ -414,7 +81,13 @@ export default function App(){
   const [marquee,setMarquee]=useState<{a:Point;b:Point}|null>(null);
   const marqueeRef=useRef<{start:Point;add:boolean}|null>(null);
   const moveDragRef=useRef<{ids:string[];start:Point;orig:Map<string,Room>;pushed:boolean;dx:number;dy:number;clicked:string;collapse:boolean}|null>(null);
-  const setSelection=(ids:string[],primary:string|null)=>{setSelIds(ids);setSelectedIdRaw(primary);setSelectedEdge(null);setLabelSel(false);setSelectedEquip(null);};
+  // Plumbing fixtures: selection, placement type/rotation, drag, clipboard.
+  const [selectedFix,setSelectedFix]=useState<string|null>(null);
+  const [placeFixType,setPlaceFixType]=useState('');
+  const [placeRot,setPlaceRot]=useState(0); // rotation of the symbol being placed (R)
+  const fixDragRef=useRef<{roomId:string;id:string;start:Point;startPos:Point;pushed:boolean}|null>(null);
+  const fixClipRef=useRef<PlacedFixture|null>(null);
+  const setSelection=(ids:string[],primary:string|null)=>{setSelIds(ids);setSelectedIdRaw(primary);setSelectedEdge(null);setLabelSel(false);setSelectedEquip(null);setSelectedFix(null);};
   const setSelectedId=(id:string|null)=>setSelection(id?[id]:[],id);
   // Label drag / resize in progress. history is pushed once, on the first real movement.
   const edgeDragRef=useRef<{roomId:string;ring:number;index:number;startRing:Point[];start:Point;normal:Point;pushed:boolean;dist:number}|null>(null);
@@ -444,6 +117,7 @@ export default function App(){
   const [settings,setSettings]=useState<AppSettings>(loadSettings);
   const [settingsOpen,setSettingsOpen]=useState(false);
   const [reportsOpen,setReportsOpen]=useState(false);
+  const [reportsInitial,setReportsInitial]=useState<string|undefined>(undefined);
   const [tplChoice,setTplChoice]=useState('');
   const [capturing,setCapturing]=useState<Action|null>(null);
   const [captureNote,setCaptureNote]=useState('');
@@ -453,8 +127,69 @@ export default function App(){
   const allTemplates=[...BUILTIN_TEMPLATES,...settings.roomTemplates];
   const findTemplate=(id?:string|null)=>id?allTemplates.find(t=>t.id===id):undefined;
   const templateName=(id?:string|null)=>findTemplate(id)?.name??'Custom';
-  const mOf=(r:Room)=>metrics(r,feetPerPoint,altitudeFt);
-  const styleOf=(type:string)=>settings.equipStyle[type]??{color:equipType(type).color,opacity:DEFAULT_EQUIP_OPACITY};
+  const env:Env={altitudeFt,peopleSensible,library,fixtureTypes};
+  const mOf=(r:Room)=>metrics(r,feetPerPoint,env);
+  const activeModule=moduleById(settings.activeModule);
+  const equipLive=settings.activeModule==='hvac'; // equipment symbols are editable only in the HVAC module
+  const fixLive=settings.activeModule==='plumb';  // plumbing fixtures only in the Plumbing module
+  const [layersOpen,setLayersOpen]=useState(false);
+  // Pan (keeping zoom) so a room sits in the middle of the view.
+  function centerOn(room:Room){
+    const v=scrollRef.current;if(!v)return;
+    const xs=room.points.map(p=>p.x),ys=room.points.map(p=>p.y),cx=(Math.min(...xs)+Math.max(...xs))/2,cy=(Math.min(...ys)+Math.max(...ys))/2;
+    offsetRef.current={x:v.clientWidth/2-cx*zoomRef.current,y:v.clientHeight/2-cy*zoomRef.current};updateViewport();
+  }
+  function tableRowClick(id:string,additive:boolean){
+    setTool('select');
+    if(additive){const ids=selIds.includes(id)?selIds.filter(x=>x!==id):[...selIds,id];setSelection(ids,ids.includes(id)?id:ids[ids.length-1]??null);return;}
+    setSelectedId(id);const r=rooms.find(x=>x.id===id);if(r)centerOn(r);
+  }
+  // The drawing area changes size when the table opens or is resized: re-render the sharp layer.
+  useEffect(()=>{scheduleDetail();},[settings.table.open,settings.table.height]); // eslint-disable-line react-hooks/exhaustive-deps
+  // The Layers menu closes on any click outside it (or Esc).
+  useEffect(()=>{
+    if(!layersOpen)return;
+    const down=(e:PointerEvent)=>{if(!(e.target instanceof Element&&e.target.closest('.hvac-layers-wrap')))setLayersOpen(false);};
+    const key=(e:KeyboardEvent)=>{if(e.key==='Escape')setLayersOpen(false);};
+    window.addEventListener('pointerdown',down,true);window.addEventListener('keydown',key);
+    return()=>{window.removeEventListener('pointerdown',down,true);window.removeEventListener('keydown',key);};
+  },[layersOpen]);
+  function openSettings(section?:string){
+    if(section)setSettings(st=>({...st,sections:{...st.sections,[section]:true}}));
+    setSettingsOpen(true);setCaptureNote('');
+  }
+  const [libraryOpen,setLibraryOpen]=useState<{tab:LibTab;item:string|null}|false>(false);
+  function openLibrary(itemId?:string){setLibraryOpen({tab:'heat',item:itemId??null});}   // heat-generating equipment
+  function openLibraries(tab:LibTab){setLibraryOpen({tab,item:null});}
+  // Library edits: keep room load lines named after their item.
+  function updateLibrary(next:LibItem[]){
+    const names=new Map(next.map(i=>[i.id,i.name]));
+    setLibrary(next);
+    setRooms(v=>v.map(r=>r.loads.some(l=>l.libId&&names.has(l.libId)&&names.get(l.libId)!==l.name)
+      ?{...r,loads:r.loads.map(l=>l.libId&&names.has(l.libId)?{...l,name:names.get(l.libId)!}:l)}:r));
+  }
+  const libUsage=(id:string)=>rooms.flatMap(r=>{const q=r.loads.filter(l=>l.libId===id).reduce((t,l)=>t+(l.qty??1),0);return q?[{room:r.name,qty:q}]:[];});
+  function addLibToRoom(room:Room,id:string){
+    const it=library.find(i=>i.id===id);if(!it)return;
+    pushHistory();
+    setRooms(v=>v.map(r=>{if(r.id!==room.id)return r;
+      const has=r.loads.find(l=>l.libId===id);
+      return {...r,loads:has?r.loads.map(l=>l===has?{...l,qty:(l.qty??1)+1}:l):[...r.loads,{id:newId(),name:it.name,value:0,unit:'W' as const,libId:id,qty:1}]};}));
+    setMessage(`Added ${it.name} to ${room.name}.`);
+  }
+  function deleteLibItem(id:string){
+    pushHistory();
+    setRooms(v=>v.map(r=>r.loads.some(l=>l.libId===id)?{...r,loads:r.loads.filter(l=>l.libId!==id)}:r));
+    setLibrary(l=>l.filter(i=>i.id!==id));
+  }
+  function switchModule(id:ModuleId){
+    if(id===settings.activeModule)return;
+    setSettings(st=>({...st,activeModule:id}));
+    if(id!=='hvac'){setSelectedEquip(null);if(tool==='equip')setTool('select');}
+    if(id!=='plumb'){setSelectedFix(null);if(tool==='fixture')setTool('select');}
+    setMessage(`${moduleById(id).name} module.`);
+  }
+  const styleOf=(type:string)=>type===FIXTURE_STYLE?settings.equipStyle[type]??{color:'#0e7490',opacity:0.12}:settings.equipStyle[type]??{color:equipType(type).color,opacity:DEFAULT_EQUIP_OPACITY};
   // The template picker follows the selected room.
   useEffect(()=>{setTplChoice(rooms.find(r=>r.id===selectedId)?.template??'');},[selectedId]); // eslint-disable-line react-hooks/exhaustive-deps
   function applyTemplateTo(room:Room,id:string){
@@ -536,12 +271,12 @@ export default function App(){
     Object.assign(out.style,{display:'block',left:`${x0}px`,top:`${y0}px`,width:`${w}px`,height:`${h}px`});
   }
 
-  const snapshot=JSON.stringify({pdfName,pageNumber,scale,customFeetPerPoint,altitudeFt,rooms});
+  const snapshot=JSON.stringify({pdfName,pageNumber,scale,customFeetPerPoint,altitudeFt,peopleSensible,library,fixtureTypes,rooms});
   useEffect(()=>{
     if(!initializedRef.current){initializedRef.current=true;lastSnapshotRef.current=snapshot;return;}
     setDirty(snapshot!==lastSnapshotRef.current);
   },[snapshot]);
-  useEffect(()=>{if(!dirty)return;try{localStorage.setItem('hvac-studio-recovery',JSON.stringify({version:1,pdfName,pageNumber,scale,customFeetPerPoint,altitudeFt,rooms}));}catch{/* storage unavailable */}},[dirty,snapshot]);
+  useEffect(()=>{if(!dirty)return;try{localStorage.setItem('hvac-studio-recovery',JSON.stringify({version:1,pdfName,pageNumber,scale,customFeetPerPoint,altitudeFt,peopleSensible,library,fixtureTypes,rooms}));}catch{/* storage unavailable */}},[dirty,snapshot]);
   useEffect(()=>()=>{if(zoomLabelTimerRef.current!==null)clearTimeout(zoomLabelTimerRef.current);},[]);
   useEffect(()=>{const warn=(e:BeforeUnloadEvent)=>{if(dirty){e.preventDefault();e.returnValue='';}};window.addEventListener('beforeunload',warn);return()=>window.removeEventListener('beforeunload',warn);},[dirty]);
   useEffect(()=>{const onKey=(e:KeyboardEvent)=>{
@@ -559,6 +294,7 @@ export default function App(){
     }
     if(settingsOpen){if(e.key==='Escape')setSettingsOpen(false);return;}
     if(reportsOpen){if(e.key==='Escape'&&!isTyping(e.target))setReportsOpen(false);return;}
+    if(libraryOpen!==false){if(e.key==='Escape'&&!isTyping(e.target))setLibraryOpen(false);return;}
     if((e.metaKey||e.ctrlKey)&&e.key.toLowerCase()==='s'){e.preventDefault();void saveProject();return;}
     if(isTyping(e.target))return;
     if((e.metaKey||e.ctrlKey)&&e.key.toLowerCase()==='z'){e.preventDefault();undo();return;}
@@ -570,27 +306,44 @@ export default function App(){
     if(mod&&k0==='a'){e.preventDefault();if(tool!=='select')switchTool('select');const ids=rooms.map(r=>r.id);setSelection(ids,ids[ids.length-1]??null);
       setMessage(`All ${ids.length} rooms selected. Drag any of them, or use the arrow keys, to move them together.`);return;}
     const curEquip=selected?.equipment.find(x=>x.id===selectedEquip);
+    const curFix=selected?.fixtures?.find(x=>x.id===selectedFix);
+    // R rotates: the symbol being placed, or the selected fixture / equipment.
+    if(k0==='r'&&!mod&&!e.altKey){
+      if(tool==='fixture'||tool==='equip'){e.preventDefault();const n=(placeRot+90)%360;setPlaceRot(n);setMessage(`Rotation ${n}°.`);return;}
+      if(curFix&&selected){e.preventDefault();pushHistory();updateFixIn(selected.id,curFix.id,{rot:(curFix.rot+90)%360});return;}
+      if(curEquip&&selected){e.preventDefault();pushHistory();updateEquipIn(selected.id,curEquip.id,{rot:((curEquip.rot??0)+90)%180});return;}
+      return;
+    }
+    if(mod&&k0==='d'&&curFix&&selected){e.preventDefault();const t=cloneFixture(curFix,selected);if(t)setMessage(`Duplicated ${t.tag}.`);return;}
+    if(mod&&k0==='c'&&curFix){fixClipRef.current={...curFix};clipboardRef.current=null;setMessage(`Copied ${fixType(curFix.typeId)?.tag??'fixture'}. Point at a room and press Ctrl/Cmd+V to paste.`);return;}
+    if(mod&&k0==='v'&&fixClipRef.current){
+      const hp=hoverRef.current,under=hp?roomAt(hp):undefined,target=under??selected;
+      if(!target){setMessage('Point at a room (or select one) to paste the fixture into it.');return;}
+      e.preventDefault();const t=cloneFixture(fixClipRef.current,target,under?hp!:undefined);if(t)setMessage(`Pasted ${t.tag} into ${target.name}.`);return;
+    }
     if(mod&&k0==='d'&&curEquip&&selected){e.preventDefault();const c=cloneInto(curEquip,selected);setMessage(`Duplicated ${curEquip.tag||curEquip.type} as ${c.tag}.`);return;}
-    if(mod&&k0==='c'&&curEquip){clipboardRef.current={...curEquip};setMessage(`Copied ${curEquip.tag||curEquip.type}. Point at a room and press Ctrl/Cmd+V to paste.`);return;}
+    if(mod&&k0==='c'&&curEquip){clipboardRef.current={...curEquip};fixClipRef.current=null;setMessage(`Copied ${curEquip.tag||curEquip.type}. Point at a room and press Ctrl/Cmd+V to paste.`);return;}
     if(mod&&k0==='v'&&clipboardRef.current){
-      const under=hover?roomAt(hover):undefined,target=under??selected;
+      const hp=hoverRef.current,under=hp?roomAt(hp):undefined,target=under??selected;
       if(!target){setMessage('Point at a room (or select one) to paste equipment into it.');return;}
-      e.preventDefault();const c=cloneInto(clipboardRef.current,target,under?hover!:undefined);setMessage(`Pasted ${c.tag} into ${target.name}.`);return;
+      e.preventDefault();const c=cloneInto(clipboardRef.current,target,under?hp!:undefined);setMessage(`Pasted ${c.tag} into ${target.name}.`);return;
     }
     if(e.target instanceof HTMLButtonElement&&e.key==='Enter')return;
-    if(e.key==='Escape'&&!(selectedEdge||labelSel||selectedEquip||draftRef.current.length||tool!=='select'))setSelectedId(null);
-    if(e.key==='Escape'){setDraft([]);setRectStart(null);setRectEnd(null);rectRef.current=null;pressRef.current=null;setCalPoints([]);setSelectedEdge(null);setLabelSel(false);setSelectedEquip(null);
-      if(tool==='equip')switchTool('select');}
+    if(e.key==='Escape'&&!(selectedEdge||labelSel||selectedEquip||selectedFix||draftRef.current.length||tool!=='select'))setSelectedId(null);
+    if(e.key==='Escape'){setDraft([]);setRectStart(null);setRectEnd(null);rectRef.current=null;pressRef.current=null;setCalPoints([]);setSelectedEdge(null);setLabelSel(false);setSelectedEquip(null);setSelectedFix(null);
+      if(tool==='equip'||tool==='fixture')switchTool('select');}
     if(e.key==='Backspace'||e.key==='Delete'){
       e.preventDefault();
       if(draftRef.current.length){setDraft(v=>v.slice(0,-1));return;}
       if(tool==='select'&&selected&&selectedEquip){removeEquip(selected.id,selectedEquip);return;}
+      if(tool==='select'&&selected&&selectedFix){removeFixture(selected.id,selectedFix);return;}
       if(tool==='select'&&selected&&selectedEdge&&selectedEdge.ring>=0){deleteCutout(selectedEdge.ring);return;}
       if(e.key==='Delete'&&tool==='select'&&(selected||selIds.length))deleteRoom();
       return;
     }
     if(e.key==='Enter'&&(tool==='draw'||tool==='cutout')){e.preventDefault();finishRoom();}
     if(tool==='select'&&selected&&selectedEquip&&e.key.startsWith('Arrow')&&!(e.target instanceof HTMLInputElement)){e.preventDefault();nudgeEquip(e.key,e.shiftKey);return;}
+    if(tool==='select'&&selected&&selectedFix&&e.key.startsWith('Arrow')&&!(e.target instanceof HTMLInputElement)){e.preventDefault();nudgeFix(e.key,e.shiftKey);return;}
     // Selected label: arrows move it (1 pt, Shift 10 pt); + / - resize it.
     if(tool==='select'&&selected&&labelSel&&!(e.target instanceof HTMLInputElement)){
       const d={ArrowUp:[0,-1],ArrowDown:[0,1],ArrowLeft:[-1,0],ArrowRight:[1,0]}[e.key];
@@ -632,7 +385,7 @@ export default function App(){
       pdfBytesRef.current=data.slice() as Uint8Array<ArrayBuffer>;setPdf(doc);setPdfName(file.name);setPageNumber(page);
       setMessage(`Background replaced with ${file.name}${doc.numPages>1?` (page ${page})`:''}. Rooms kept.${sameSize?'':' The new sheet is a different size.'} If the plan shifted, press Ctrl/Cmd+A, then drag or use the arrow keys to realign.${scale==='custom'?' Check the custom calibration still matches.':''}`);
     }catch(err){console.error(err);setMessage('Unable to open that PDF. The current background was kept.');}}
-  function projectData():ProjectFile{return {version:1,pdfName,pdfBase64:pdfBytesRef.current?bytesToBase64(pdfBytesRef.current):null,pageNumber,scale,customFeetPerPoint,altitudeFt,rooms};}
+  function projectData():ProjectFile{return {version:1,pdfName,pdfBase64:pdfBytesRef.current?bytesToBase64(pdfBytesRef.current):null,pageNumber,scale,customFeetPerPoint,altitudeFt,peopleSensible,library,fixtureTypes,rooms};}
   function downloadProject(content:string,name:string){const url=URL.createObjectURL(new Blob([content],{type:'application/json'}));const a=document.createElement('a');a.href=url;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(url),2000);}
   async function saveProject(saveAs=false){
     const content=JSON.stringify(projectData());
@@ -643,7 +396,7 @@ export default function App(){
         else{downloadProject(content,projectName);setMessage('Project downloaded. This browser does not support direct overwrite; use desktop Chrome for Save to same file.');return;}
       }
       const writable=await handle.createWritable();await writable.write(content);await writable.close();
-      lastSnapshotRef.current=JSON.stringify({pdfName,pageNumber,scale,customFeetPerPoint,altitudeFt,rooms});setDirty(false);
+      lastSnapshotRef.current=JSON.stringify({pdfName,pageNumber,scale,customFeetPerPoint,altitudeFt,peopleSensible,library,fixtureTypes,rooms});setDirty(false);
       setMessage(`Saved ${handle.name}`);
     }catch(err){if((err as Error).name!=='AbortError'){console.error(err);setMessage('Save failed. Please try Save As.');}}
   }
@@ -654,8 +407,12 @@ export default function App(){
       if(parsed.pdfBase64){bytes=base64ToBytes(parsed.pdfBase64) as Uint8Array<ArrayBuffer>;doc=await pdfjsLib.getDocument({data:bytes.slice()}).promise;}
       historyRef.current=[];pdfBytesRef.current=bytes;setPdf(doc);setPdfName(parsed.pdfName||'No PDF');setPageNumber(parsed.pageNumber||1);
       setScale(parsed.scale||'1/8');setCustomFeetPerPoint(parsed.customFeetPerPoint??null);const fpp=(parsed.scale||'1/8')==='custom'?parsed.customFeetPerPoint??null:scaleFeetPerPoint(parsed.scale||'1/8');
-      const loadedRooms=placeMissingEquipment(parsed.rooms.map(normalizeRoom),fpp?1/fpp:9);setRooms(loadedRooms);setAltitudeFt(parsed.altitudeFt??0);setSelectedId(null);setDraft([]);setTool('select');setZoom(1);zoomRef.current=1;offsetRef.current={x:20,y:20};
-      projectHandleRef.current=handle;setProjectName(file.name);lastSnapshotRef.current=JSON.stringify({pdfName:parsed.pdfName||'No PDF',pageNumber:parsed.pageNumber||1,scale:parsed.scale||'1/8',customFeetPerPoint:parsed.customFeetPerPoint??null,altitudeFt:parsed.altitudeFt??0,rooms:loadedRooms});setDirty(false);
+      const loadedRooms=placeMissingEquipment(parsed.rooms.map(normalizeRoom),fpp?1/fpp:9);setRooms(loadedRooms);setAltitudeFt(parsed.altitudeFt??0);
+      // People heat used to be stored per room; take it from the first room in older files.
+      const ps=parsed.peopleSensible??(parsed.rooms[0] as {peopleSensible?:number}|undefined)?.peopleSensible??250,lib=normalizeLibrary(parsed.library);
+      const ft=normalizeFixtureTypes(parsed.fixtureTypes);
+      setPeopleSensible(ps);setLibrary(lib);setFixtureTypes(ft);setSelectedId(null);setDraft([]);setTool('select');setZoom(1);zoomRef.current=1;offsetRef.current={x:20,y:20};
+      projectHandleRef.current=handle;setProjectName(file.name);lastSnapshotRef.current=JSON.stringify({pdfName:parsed.pdfName||'No PDF',pageNumber:parsed.pageNumber||1,scale:parsed.scale||'1/8',customFeetPerPoint:parsed.customFeetPerPoint??null,altitudeFt:parsed.altitudeFt??0,peopleSensible:ps,library:lib,fixtureTypes:ft,rooms:loadedRooms});setDirty(false);
       setMessage(`Opened ${file.name}. Cmd+S saves changes to this project${handle?' directly':''}.`);
     }catch(err){console.error(err);setMessage('Could not open this HVAC Studio project.');}
   }
@@ -674,15 +431,29 @@ export default function App(){
     setMessage(`${name} created. ${feetPerPoint===null?'Calibrate the scale to calculate SF.':'Area calculated from inside-face polygon.'}`);
   }
   function switchTool(t:Tool){
+    if(t==='fixture'){
+      if(!fixtureTypes.length){openLibraries('plumbing');setMessage('Pick the fixtures this project uses first, then place them.');return;}
+      if(!fixtureTypes.some(x=>x.id===placeFixType))setPlaceFixType(fixtureTypes[0].id);
+      if(settings.activeModule!=='plumb')setSettings(st=>({...st,activeModule:'plumb'}));
+      setSelectedFix(null);
+    }
+    if(t==='equip'&&settings.activeModule!=='hvac')setSettings(st=>({...st,activeModule:'hvac'}));
     setTool(t);draftRef.current=[];setDraft([]);pressRef.current=null;rectRef.current=null;setRectStart(null);setRectEnd(null);setCalPoints([]);
     if(t==='draw')setMessage('Draw: click-drag for a rectangle, or click corners for a polygon.');
     if(t==='cutout')setMessage('Cutout: click-drag for a rectangle, or click corners for a polygon. It goes into the selected room, or the room that contains it.');
     if(t==='calibrate')setMessage('Click two points of a known dimension to calibrate.');
     if(t==='select')setMessage('Select: click a room, its label, a wall, or a piece of equipment.');
-    if(t==='equip')setMessage('Place equipment: pick a type, then click inside a room. Esc goes back to Select.');
+    if(t==='equip')setMessage('Place equipment: pick a type, R rotates, click inside a room. Esc goes back to Select.');
+    if(t==='fixture'){const ft=fixtureTypes.find(x=>x.id===placeFixType)??fixtureTypes[0];if(ft)setMessage(`Placing ${ft.tag} · ${ft.name}. Press ${sc('fixture')} again for the next fixture · R rotates · click inside a room · Esc to stop.`);}
   }
   function runAction(a:Action){
+    // Fixture key: first press picks up the last fixture used; each further press cycles to the next one.
+    if(a==='fixture'&&tool==='fixture'&&fixtureTypes.length){
+      const i=fixtureTypes.findIndex(x=>x.id===placeFixType),n=fixtureTypes[(i+1)%fixtureTypes.length];
+      setPlaceFixType(n.id);setMessage(`Placing ${n.tag} · ${n.name} (${fixtureTypes.indexOf(n)+1} of ${fixtureTypes.length}). ${sc('fixture')} again for the next fixture · R rotates.`);return;
+    }
     if(a==='fit'){if(pdf)fitPage();return;}
+    if(a==='table'){setSettings(st=>({...st,table:{...st.table,open:!st.table.open}}));return;}
     if(a==='snap'){setOrthogonal(!orthogonal);setMessage(`15° snap ${orthogonal?'off':'on'}.`);return;}
     switchTool(a);
   }
@@ -761,8 +532,8 @@ export default function App(){
     setSelIds([roomId]);setSelectedIdRaw(roomId);setSelectedEdge(null);setLabelSel(false);setSelectedEquip(id);
     setSettings(st=>st.rightOpen&&st.sections.hvac!==false?st:{...st,rightOpen:true,sections:{...st.sections,hvac:true}});
   }
-  function addEquipTo(room:Room,type:string,pos?:Point){
-    const e=buildEquip(room,type,pos);
+  function addEquipTo(room:Room,type:string,pos?:Point,rot=0){
+    const e=buildEquip(room,type,pos);e.rot=rot;
     pushHistory();setRooms(v=>v.map(r=>r.id===room.id?{...r,equipment:[...r.equipment,e]}:r));
     selectEquip(room.id,e.id);
     setMessage(`Added ${e.tag} to ${room.name}. Drag it into place · Delete removes · Ctrl/Cmd+D duplicates.`);
@@ -799,6 +570,57 @@ export default function App(){
     equipDragRef.current={roomId:room.id,id:eq.id,start:pointFromEvent(e as unknown as ReactPointerEvent<SVGSVGElement>),startPos:eq.pos,pushed:false};
     svgRef.current?.setPointerCapture(e.pointerId);
   }
+  // ---- Plumbing fixtures ----
+  const fixType=(id:string)=>fixtureTypes.find(x=>x.id===id);
+  const fixPt=(t:FixtureType,rot:number)=>{const r=rot%180!==0;return {w:(r?t.size.h:t.size.w)*ptPerFt,h:(r?t.size.w:t.size.h)*ptPerFt};};
+  const fixUsage=(typeId:string)=>rooms.reduce((n,r)=>n+(r.fixtures??[]).filter(f=>f.typeId===typeId).length,0);
+  const fixSpot=(room:Room,t:FixtureType,skip?:string)=>freeSpot(room,[labelObstacle(room),...equipObstacles(room,ptPerFt),
+    ...(room.fixtures??[]).filter(f=>f.id!==skip).flatMap(f=>{const ft=fixType(f.typeId);return ft?[{p:f.pos,r:Math.hypot(ft.size.w,ft.size.h)/2*ptPerFt}]:[];})],Math.hypot(t.size.w,t.size.h)/2*ptPerFt);
+  function selectFixture(roomId:string,id:string){
+    setSelIds([roomId]);setSelectedIdRaw(roomId);setSelectedEdge(null);setLabelSel(false);setSelectedEquip(null);setSelectedFix(id);
+    setSettings(st=>st.rightOpen&&st.sections.plumb!==false?st:{...st,rightOpen:true,sections:{...st.sections,plumb:true}});
+  }
+  function addFixtureTo(room:Room,typeId:string,pos?:Point,rot=0){
+    const t=fixType(typeId);if(!t)return;
+    const f:PlacedFixture={id:newId(),typeId,pos:pos??fixSpot(room,t),rot};
+    pushHistory();setRooms(v=>v.map(r=>r.id===room.id?{...r,fixtures:[...(r.fixtures??[]),f]}:r));
+    selectFixture(room.id,f.id);
+    setMessage(`Placed ${t.tag} in ${room.name}. Drag to position · R rotates · Delete removes · Ctrl/Cmd+D duplicates.`);
+  }
+  const updateFixIn=(roomId:string,id:string,ch:Partial<PlacedFixture>)=>setRooms(v=>v.map(r=>r.id===roomId?{...r,fixtures:(r.fixtures??[]).map(f=>f.id===id?{...f,...ch}:f)}:r));
+  function removeFixture(roomId:string,id:string){
+    const room=rooms.find(r=>r.id===roomId),f=room?.fixtures.find(x=>x.id===id);if(!room||!f)return;
+    pushHistory();setRooms(v=>v.map(r=>r.id===roomId?{...r,fixtures:r.fixtures.filter(x=>x.id!==id)}:r));
+    if(selectedFix===id)setSelectedFix(null);
+    setMessage(`Removed ${fixType(f.typeId)?.tag??'fixture'} from ${room.name}. Ctrl/Cmd+Z to undo.`);
+  }
+  function deleteFixtureType(id:string){
+    pushHistory();setRooms(v=>v.map(r=>(r.fixtures??[]).some(f=>f.typeId===id)?{...r,fixtures:r.fixtures.filter(f=>f.typeId!==id)}:r));
+    setFixtureTypes(v=>v.filter(t=>t.id!==id));if(placeFixType===id)setPlaceFixType('');setSelectedFix(null);
+  }
+  // Copy beside the original if it fits in the room, else at the given point or any free spot.
+  function cloneFixture(src:PlacedFixture,room:Room,at?:Point){
+    const t=fixType(src.typeId);if(!t)return null;
+    let pos=at;
+    if(!pos){const c={x:src.pos.x+fixPt(t,src.rot).w+ptPerFt,y:src.pos.y};if(roomAt(c)?.id===room.id)pos=c;}
+    const f:PlacedFixture={...src,id:newId(),pos:pos??fixSpot(room,t)};
+    pushHistory();setRooms(v=>v.map(r=>r.id===room.id?{...r,fixtures:[...(r.fixtures??[]),f]}:r));
+    selectFixture(room.id,f.id);return t;
+  }
+  function nudgeFix(key:string,big:boolean){
+    const f=selected?.fixtures.find(x=>x.id===selectedFix);if(!selected||!f)return;
+    const d=({ArrowUp:[0,-1],ArrowDown:[0,1],ArrowLeft:[-1,0],ArrowRight:[1,0]} as Record<string,[number,number]>)[key];if(!d)return;
+    const st=nudgeStep(big),np={x:f.pos.x+d[0]*st,y:f.pos.y+d[1]*st};
+    if(roomAt(np)?.id!==selected.id){setMessage('That would move the fixture out of the room. Drag it to move it to another room.');return;}
+    pushHistory();updateFixIn(selected.id,f.id,{pos:np});
+  }
+  function startFixDrag(e:ReactPointerEvent<SVGElement>,room:Room,f:PlacedFixture){
+    if(tool!=='select'||e.button!==0)return;
+    e.stopPropagation();e.preventDefault();releaseFocus();
+    selectFixture(room.id,f.id);
+    fixDragRef.current={roomId:room.id,id:f.id,start:pointFromEvent(e as unknown as ReactPointerEvent<SVGSVGElement>),startPos:f.pos,pushed:false};
+    svgRef.current?.setPointerCapture(e.pointerId);
+  }
   // Keep the selected equipment's card in view in the properties panel.
   useEffect(()=>{if(selectedEquip)cardRefs.current.get(selectedEquip)?.scrollIntoView({block:'nearest',behavior:'smooth'});},[selectedEquip]);
   const roomIsValid=(r:Room)=>{
@@ -827,7 +649,7 @@ export default function App(){
     }else{
       const shift=(r:Point[])=>r.map(p=>({x:p.x+arrow.x*step,y:p.y+arrow.y*step}));
       next={...selected,points:shift(selected.points),cutouts:cutoutsOf(selected).map(shift),labelPos:selected.labelPos?shift([selected.labelPos])[0]:selected.labelPos,
-        equipment:selected.equipment.map(q=>q.pos?{...q,pos:shift([q.pos])[0]}:q)};
+        equipment:selected.equipment.map(q=>q.pos?{...q,pos:shift([q.pos])[0]}:q),fixtures:(selected.fixtures??[]).map(f=>({...f,pos:shift([f.pos])[0]}))};
     }
     if(!roomIsValid(next)){setMessage("Can't nudge further: walls would cross or a cutout would leave its room.");return;}
     pushHistory();
@@ -856,7 +678,11 @@ export default function App(){
     }else if(tool==='equip'){
       const room=roomAt(p);
       if(!room){setMessage('Click inside a room to place equipment.');return;}
-      addEquipTo(room,placeType,p);
+      addEquipTo(room,placeType,p,placeRot%180);
+    }else if(tool==='fixture'){
+      const room=roomAt(p);
+      if(!room){setMessage('Click inside a room to place the fixture.');return;}
+      addFixtureTo(room,placeFixType,p,placeRot);
     }else if(tool==='draw'||tool==='cutout'){
       const corners=draftRef.current;
       if(!corners.length){
@@ -931,7 +757,7 @@ export default function App(){
     setMessage(mode==='move'?`${room.name} label selected. Drag to move, drag the corner handle to resize, or use + / −.`:'Drag to resize the label.');
   }
   function onPointerMove(e:ReactPointerEvent<SVGSVGElement>){
-    const p=pointFromEvent(e);setHover(p);
+    const p=pointFromEvent(e);setHover(p);hoverRef.current=p;
     if(marqueeRef.current){setMarquee({a:marqueeRef.current.start,b:p});return;}
     const md=moveDragRef.current;
     if(md){
@@ -955,6 +781,14 @@ export default function App(){
       wd.dist=d;setRooms(v=>v.map(r=>r.id===next.id?next:r));
       const na=mOf(next).area;
       setMessage(`Moving wall ${feetPerPoint?fmtFeet(Math.abs(d)*feetPerPoint):`${fmt(Math.abs(d))} pt`}${na!==null?` · ${next.name}: ${fmt(na)} SF`:''}`);
+      return;
+    }
+    const fd=fixDragRef.current;
+    if(fd){
+      const dx=p.x-fd.start.x,dy=p.y-fd.start.y;
+      if(!fd.pushed){if(Math.hypot(dx,dy)*zoomRef.current<3)return;pushHistory();fd.pushed=true;}
+      const np={x:fd.startPos.x+dx,y:fd.startPos.y+dy};
+      updateFixIn(fd.roomId,fd.id,{pos:np});setDropTarget(roomAt(np)?.id??null);
       return;
     }
     const ed=equipDragRef.current;
@@ -987,6 +821,8 @@ export default function App(){
     if(wd){edgeDragRef.current=null;if(wd.pushed)setRooms(v=>v.map(r=>r.id===wd.roomId?withRing(r,wd.ring,wd.startRing):r));}
     const ed=equipDragRef.current;
     if(ed){equipDragRef.current=null;setDropTarget(undefined);if(ed.pushed)updateEquipIn(ed.roomId,ed.id,{pos:ed.startPos});}
+    const fd=fixDragRef.current;
+    if(fd){fixDragRef.current=null;setDropTarget(undefined);if(fd.pushed)updateFixIn(fd.roomId,fd.id,{pos:fd.startPos});}
     labelDragRef.current=null;pressRef.current=null;
   }
   function onPointerUp(e:ReactPointerEvent<SVGSVGElement>){
@@ -1016,6 +852,19 @@ export default function App(){
       if(wd.pushed){const r=rooms.find(x=>x.id===wd.roomId),a=r?mOf(r).area:null;
         setMessage(`Wall moved ${feetPerPoint?fmtFeet(Math.abs(wd.dist)*feetPerPoint):`${fmt(Math.abs(wd.dist))} pt`}.${a!==null&&r?` ${r.name}: ${fmt(a)} SF.`:''} Ctrl/Cmd+Z to undo.`);}
       return;}
+    const fd=fixDragRef.current;
+    if(fd){
+      fixDragRef.current=null;setDropTarget(undefined);
+      if(!fd.pushed)return;
+      const q=pointFromEvent(e),pos={x:fd.startPos.x+q.x-fd.start.x,y:fd.startPos.y+q.y-fd.start.y};
+      const from=rooms.find(r=>r.id===fd.roomId),f=from?.fixtures.find(x=>x.id===fd.id);if(!from||!f)return;
+      const to=roomAt(pos),tag=fixType(f.typeId)?.tag??'Fixture';
+      if(!to){updateFixIn(fd.roomId,fd.id,{pos:fd.startPos});setMessage('Fixtures have to sit inside a room, so it went back.');return;}
+      if(to.id===from.id){updateFixIn(fd.roomId,fd.id,{pos});return;}
+      setRooms(v=>v.map(r=>r.id===from.id?{...r,fixtures:r.fixtures.filter(x=>x.id!==f.id)}:r.id===to.id?{...r,fixtures:[...(r.fixtures??[]),{...f,pos}]}:r));
+      selectFixture(to.id,f.id);setMessage(`Moved ${tag} from ${from.name} to ${to.name}.`);
+      return;
+    }
     const ed=equipDragRef.current;
     if(ed){
       equipDragRef.current=null;setDropTarget(undefined);
@@ -1127,6 +976,7 @@ export default function App(){
         <IconBtn tip="Open project" onClick={()=>void openProject()}><FolderOpen size={17}/></IconBtn>
         <IconBtn tip="Save (Ctrl/Cmd+S)" onClick={()=>void saveProject()}><Save size={17}/></IconBtn>
         <IconBtn tip="Save as…" onClick={()=>void saveProject(true)}><SaveAll size={17}/></IconBtn>
+        <IconBtn tip="Libraries: heat-generating equipment, plumbing fixtures" active={libraryOpen!==false} onClick={()=>setLibraryOpen({tab:'heat',item:null})}><Package size={17}/></IconBtn>
       </div></div>
       <div className="hvac-group"><span className="hvac-group-label">PDF</span><div className="hvac-group-items">
         <IconBtn tip="Import PDF (new takeoff)" onClick={()=>fileRef.current?.click()}><Upload size={17}/></IconBtn>
@@ -1134,29 +984,49 @@ export default function App(){
         <IconBtn tip="Replace background PDF (keeps rooms)" disabled={!pdf} onClick={()=>replaceRef.current?.click()}><RefreshCw size={17}/></IconBtn>
         <select className="hvac-scale-select" title="Drawing scale" aria-label="Drawing scale" value={scale} onChange={e=>{const v=e.target.value;setScale(v);e.currentTarget.blur();if(v==='custom')switchTool('calibrate');}}>{scales.map(([value,label])=><option key={value} value={value}>{label}</option>)}</select>
         <IconBtn tip={`Calibrate scale (${sc('calibrate')})`} active={tool==='calibrate'} onClick={()=>switchTool('calibrate')}><Ruler size={17}/></IconBtn>
+        <div className="hvac-layers-wrap">
+          <IconBtn tip="Layers" active={layersOpen} onClick={()=>setLayersOpen(v=>!v)}><LayersIcon size={17}/></IconBtn>
+          {layersOpen&&<div className="hvac-layers">
+            {([['fills','Room fills'],['labels','Room labels'],['labelValues',`${activeModule.short} values on labels`],['equipment','Equipment symbols'],['fixtures','Plumbing fixtures']] as const).map(([k,l])=>
+              <label key={k}><input type="checkbox" checked={settings.layers[k]} disabled={k==='labelValues'&&!settings.layers.labels}
+                onChange={e=>setSettings(st=>({...st,layers:{...st.layers,[k]:e.target.checked}}))}/> {l}</label>)}
+            
+          </div>}
+        </div>
         <label className="hvac-opacity" data-tip="PDF opacity"><Eye size={16}/><input type="range" min={10} max={100} step={5} value={Math.round(settings.pdfOpacity*100)} aria-label="PDF opacity" onChange={e=>setSettings(st=>({...st,pdfOpacity:Number(e.target.value)/100}))} onPointerUp={e=>e.currentTarget.blur()}/><span>{Math.round(settings.pdfOpacity*100)}%</span></label>
         <IconBtn tip="Zoom out" onClick={()=>zoomAt(Math.max(.15,zoom/1.25))}><ZoomOut size={17}/></IconBtn>
         <span className="hvac-zoom">{Math.round(zoom*100)}%</span>
         <IconBtn tip="Zoom in" onClick={()=>zoomAt(Math.min(8,zoom*1.25))}><ZoomIn size={17}/></IconBtn>
         <IconBtn tip={`Fit page (${sc('fit')})`} disabled={!pdf} onClick={fitPage}><Maximize size={17}/></IconBtn>
       </div></div>
+      {MODULES.length>1&&<div className="hvac-group"><span className="hvac-group-label">Module</span><div className="hvac-group-items">
+        <div className="hvac-switch" role="tablist" aria-label="Calculation module">
+          {MODULES.map(x=><button key={x.id} role="tab" aria-selected={x.id===activeModule.id} className={x.id===activeModule.id?'on':undefined} title={x.name} onClick={()=>switchModule(x.id)}>{x.short}</button>)}
+        </div>
+      </div></div>}
       <div className="hvac-group"><span className="hvac-group-label">Draw</span><div className="hvac-group-items">
         <IconBtn tip={`Select (${sc('select')})`} active={tool==='select'} onClick={()=>switchTool('select')}><MousePointer2 size={17}/></IconBtn>
         <IconBtn tip={`Draw room — drag for rectangle, click corners for polygon (${sc('draw')})`} active={tool==='draw'} onClick={()=>switchTool('draw')}><PenTool size={17}/></IconBtn>
         <IconBtn tip={`Cutout — drag for rectangle, click corners for polygon (${sc('cutout')})`} active={tool==='cutout'} onClick={()=>switchTool('cutout')}><Scissors size={17}/></IconBtn>
+{equipLive&&<>
         <IconBtn tip={`Place equipment — click inside a room (${sc('equip')})`} active={tool==='equip'} onClick={()=>switchTool('equip')}><AirVent size={17}/></IconBtn>
         {tool==='equip'&&<select className="hvac-scale-select" title="Equipment type to place" aria-label="Equipment type to place" value={placeType} onChange={e=>{setPlaceType(e.target.value);e.currentTarget.blur();}}>
-          {EQUIP_TYPES.map(t=><option key={t.type}>{t.type}</option>)}</select>}
+          {EQUIP_TYPES.map(t=><option key={t.type}>{t.type}</option>)}</select>}</>}
+{fixLive&&<>
+        <IconBtn tip={`Place plumbing fixture — R rotates, click inside a room (${sc('fixture')})`} active={tool==='fixture'} onClick={()=>switchTool('fixture')}><Droplets size={17}/></IconBtn>
+        {tool==='fixture'&&<select className="hvac-scale-select" title="Fixture to place" aria-label="Fixture to place" value={placeFixType} onChange={e=>{setPlaceFixType(e.target.value);e.currentTarget.blur();}}>
+          {fixtureTypes.map(t=><option key={t.id} value={t.id}>{t.tag} · {t.name}</option>)}</select>}</>}
         <IconBtn tip={`15° snap: ${orthogonal?'on':'off'} (${sc('snap')})`} active={orthogonal} onClick={()=>runAction('snap')}><Magnet size={17}/></IconBtn>
         <IconBtn tip="Undo (Ctrl/Cmd+Z)" onClick={undo}><Undo2 size={17}/></IconBtn>
       </div></div>
       <div className="hvac-group"><span className="hvac-group-label">Output</span><div className="hvac-group-items">
-        <IconBtn tip="Reports" active={reportsOpen} onClick={()=>setReportsOpen(true)}><ClipboardList size={17}/></IconBtn>
+        <IconBtn tip={`Room table (${sc('table')})`} active={settings.table.open} onClick={()=>runAction('table')}><LayoutList size={17}/></IconBtn>
+        <IconBtn tip="Reports" active={reportsOpen} onClick={()=>{setReportsInitial(undefined);setReportsOpen(true);}}><ClipboardList size={17}/></IconBtn>
         <IconBtn tip="Export all room data to CSV" disabled={!rooms.length} onClick={exportCsv}><Download size={17}/></IconBtn>
       </div></div>
       <div className="hvac-spacer"/>
       <div className="hvac-group hvac-group-end"><span className="hvac-group-label">App</span><div className="hvac-group-items">
-        <IconBtn tip="Settings" active={settingsOpen} onClick={()=>{setSettingsOpen(true);setCaptureNote('');}}><Settings size={17}/></IconBtn>
+        <IconBtn tip="Settings" active={settingsOpen} onClick={()=>openSettings()}><Settings size={17}/></IconBtn>
       </div></div>
     </div>
     <div className="hvac-content">
@@ -1167,18 +1037,25 @@ export default function App(){
         </div>
         {rooms.length>0&&feetPerPoint!==null&&(()=>{const tot=rooms.reduce((t,r)=>t+(roomArea(r)??0),0);
           const ms=rooms.map(mOf),oa=ms.reduce((t,m)=>t+(m.voz??0),0),prov=ms.reduce((t,m)=>t+m.oa,0);
+          if(fixLive){const pt=ms.reduce((t,m)=>({n:t.n+m.plumbing.count,c:t.c+m.plumbing.cold,h:t.h+m.plumbing.hot,w:t.w+m.plumbing.wsfu,d:t.d+m.plumbing.dfu}),{n:0,c:0,h:0,w:0,d:0});
+            return <div className="hvac-totals"><div className="hvac-row"><span>Total net area</span><strong>{fmt(tot)} SF</strong></div>
+              <div className="hvac-row"><span>Fixtures</span><strong>{fmt(pt.n)}</strong></div>
+              <div className="hvac-row"><span>WSFU (cold / hot)</span><strong>{fmtFu(pt.c)} / {fmtFu(pt.h)}</strong></div>
+              <div className="hvac-row"><span>Total WSFU</span><strong>{fmtFu(pt.w)}</strong></div>
+              <div className="hvac-row"><span>DFU</span><strong>{fmtFu(pt.d)}</strong></div></div>;}
           return <div className="hvac-totals"><div className="hvac-row"><span>Total net area</span><strong>{fmt(tot)} SF</strong></div><div className="hvac-row"><span>Required OA (ΣV<sub>oz</sub>)</span><strong>{fmt(oa)} cfm</strong></div><div className="hvac-row"><span>Provided OA</span><strong className={prov<oa-0.05?'hvac-bad-text':undefined}>{fmt(prov)} cfm</strong></div></div>;})()}
       </SidePanel>
+      <div className="hvac-center">
       <main ref={scrollRef} className={`hvac-main${spaceHeld?' pan-ready':''}${panning?' panning':''}`} onWheel={onWheel} onPointerDownCapture={onPanDown} onPointerMoveCapture={onPanMove} onPointerUpCapture={endPan} onPointerCancelCapture={endPan} onAuxClick={e=>e.preventDefault()}>
         {!pdf?<div className="hvac-empty"><FileText size={54} strokeWidth={1.3}/><strong>Start with a floor plan</strong><span>Import a PDF, choose its scale, then trace inside wall faces.</span><button className="hvac-btn primary" onClick={()=>fileRef.current?.click()}>Choose PDF</button></div>:
           <div ref={sheetRef} className="hvac-sheet" style={{width:0,height:0,boxShadow:"none",background:"transparent"}}>
             <div ref={worldRef} className="hvac-world" style={{width:pageSize.width,height:pageSize.height,transform:`translate3d(${offsetRef.current.x}px, ${offsetRef.current.y}px, 0) scale(${zoomRef.current})`,transformOrigin:"0 0",background:"white",boxShadow:"0 6px 26px #64748b35"}}>
               <canvas ref={canvasRef} style={{opacity:settings.pdfOpacity}}/>
               <canvas ref={detailRef} className="hvac-detail" style={{opacity:settings.pdfOpacity}}/>
-              <svg ref={svgRef} viewBox={`0 0 ${pageSize.width} ${pageSize.height}`} width={pageSize.width} height={pageSize.height} onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp} onPointerCancel={onPointerCancel} onDoubleClick={e=>{if((tool==='draw'||tool==='cutout')&&draftRef.current.length>=3){e.preventDefault();finishRoom();}}} onContextMenu={e=>e.preventDefault()} style={{cursor:tool==='select'?'default':tool==='equip'?'copy':'crosshair'}}>
+              <svg ref={svgRef} viewBox={`0 0 ${pageSize.width} ${pageSize.height}`} width={pageSize.width} height={pageSize.height} onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp} onPointerCancel={onPointerCancel} onDoubleClick={e=>{if((tool==='draw'||tool==='cutout')&&draftRef.current.length>=3){e.preventDefault();finishRoom();}}} onContextMenu={e=>e.preventDefault()} style={{cursor:tool==='select'?'default':tool==='equip'||tool==='fixture'?'copy':'crosshair'}}>
                 <rect data-layer="background" width={pageSize.width} height={pageSize.height} fill="transparent"/>
                 {rooms.map(room=><g key={room.id} onPointerDown={e=>startRoomDrag(e,room)} style={{pointerEvents:tool==='select'?'auto':'none'}}>
-                  <path d={[room.points,...cutoutsOf(room)].map(ringPath).join('')} fillRule="evenodd" fill={selIds.includes(room.id)?'#3b82f6':'#22c55e'} fillOpacity={room.id === selectedId ? 0.24 : 0.14} stroke={selIds.includes(room.id)?'#2563eb':'#16a34a'} strokeWidth={2/zoom}/>
+                  <path d={[room.points,...cutoutsOf(room)].map(ringPath).join('')} fillRule="evenodd" fill={selIds.includes(room.id)?'#3b82f6':'#22c55e'} fillOpacity={!settings.layers.fills?0:room.id === selectedId ? 0.24 : 0.14} stroke={selIds.includes(room.id)?'#2563eb':'#16a34a'} strokeWidth={2/zoom}/>
                   {cutoutsOf(room).map((c,k)=><path key={k} d={ringPath(c)} fill="none" stroke="#dc2626" strokeWidth={1.5/zoom} strokeDasharray={`${5/zoom} ${3/zoom}`} pointerEvents="none"/>)}
                 </g>)}
                 {tool==='select'&&edgeA&&edgeB&&<g pointerEvents="none">
@@ -1189,13 +1066,15 @@ export default function App(){
                   const ang=Math.abs(Math.atan2(b.y-a.y,b.x-a.x)*180/Math.PI)%180,cur=ang<30||ang>150?'ns-resize':ang>60&&ang<120?'ew-resize':ang<90?'nesw-resize':'nwse-resize';
                   return <line key={`${room.id}-${ri}-${i}`} className="hvac-edge-hit" x1={a.x} y1={a.y} x2={b.x} y2={b.y} stroke="transparent" strokeWidth={10/zoom} strokeLinecap="butt" pointerEvents="stroke"
                     style={{cursor:cur}} onPointerDown={e=>startEdgeDrag(e,room,ri-1,i)}/>;})))}
-                {rooms.map(room=>{const lp=room.labelPos??labelPoint(room),size=room.labelSize??DEFAULT_LABEL_SIZE,a=roomArea(room),sel=room.id===selectedId;
+                {settings.layers.labels&&rooms.map(room=>{const lp=room.labelPos??labelPoint(room),size=room.labelSize??DEFAULT_LABEL_SIZE,a=roomArea(room),sel=room.id===selectedId;
+                  const extra=settings.layers.labelValues?activeModule.labelLine(room,mOf(room)):null;
                   return <text key={room.id} ref={el=>{if(el)labelRefs.current.set(room.id,el);else labelRefs.current.delete(room.id);}}
                     className={tool==='select'?'hvac-label':undefined} x={lp.x} y={lp.y} textAnchor="middle"
                     fill={sel?'#1d4ed8':'#1e3a8a'} stroke="white" strokeWidth={size*0.28} paintOrder="stroke" strokeLinejoin="round" fontSize={size} fontWeight="bold"
                     pointerEvents={tool==='select'?'visiblePainted':'none'} onPointerDown={e=>startLabelDrag(e,room,'move')}>
                     <tspan x={lp.x} dy={a!==null?-size*0.15:size*0.35}>{room.name}</tspan>
                     {a!==null&&<tspan x={lp.x} dy={size*1.05} fontSize={size*0.85} fontWeight={600}>{fmt(a)} SF</tspan>}
+                    {extra&&<tspan x={lp.x} dy={size*1.0} fontSize={size*0.75} fontWeight={600} fill={extra.bad?'#dc2626':'#0f766e'}>{extra.text}</tspan>}
                   </text>;})}
                 {tool==='select'&&labelSel&&selected&&labelBox&&(()=>{const pad=(selected.labelSize??DEFAULT_LABEL_SIZE)*0.25,h=7/zoom;
                   const bx=labelBox.x-pad,by=labelBox.y-pad,bw=labelBox.width+pad*2,bh=labelBox.height+pad*2;
@@ -1204,12 +1083,13 @@ export default function App(){
                     <rect className="hvac-label-handle" x={bx+bw-h/2} y={by+bh-h/2} width={h} height={h} fill="white" stroke="#f97316" strokeWidth={1.5/zoom} onPointerDown={e=>startLabelDrag(e,selected,'size')}/>
                   </g>;})()}
                 {dropTarget&&(()=>{const r=rooms.find(x=>x.id===dropTarget);return r&&r.id!==selectedId?<path d={ringPath(r.points)} fill="#16a34a" fillOpacity={.08} stroke="#16a34a" strokeWidth={3/zoom} strokeDasharray={`${8/zoom} ${5/zoom}`} pointerEvents="none"/>:null;})()}
-                {rooms.map(room=>room.equipment.map(eq=>{if(!eq.pos)return null;
+                {settings.layers.equipment&&rooms.map(room=>room.equipment.map(eq=>{if(!eq.pos)return null;
                   const t=equipType(eq.type),{w,h}=symbolPt(eq),sel=eq.id===selectedEquip,hov=eq.id===hoverEquip,oa=eq.method==='oa';
                   const st=styleOf(eq.type),lost=sel&&dropTarget===null,color=lost?'#dc2626':st.color,stroke=sel?'#f97316':hov?'#f59e0b':color;
                   const fs=Math.max(2.5,Math.min(w,h)*(oa?0.42:0.34)),flow=equipSupply(eq),cap=eq.method==='capacity'?(eq.cools?eq.coolCap:eq.heatCap):null;
                   const sub=cap!==null?`${fmt(Math.round(cap/100)/10)} MBH`:`${fmt(flow)} cfm`;
-                  return <g key={eq.id} className={tool==='select'?'hvac-equip-sym':undefined} pointerEvents={tool==='select'?'all':'none'}
+                  const live=tool==='select'&&equipLive; // other modules show equipment faded and locked
+                  return <g key={eq.id} className={live?'hvac-equip-sym':undefined} pointerEvents={live?'all':'none'} opacity={equipLive?1:0.35}
                     onPointerDown={e=>startEquipDrag(e,room,eq)} onPointerEnter={()=>setHoverEquip(eq.id)} onPointerLeave={()=>setHoverEquip(null)}>
                     <rect x={eq.pos.x-w/2} y={eq.pos.y-h/2} width={w} height={h} rx={oa?0:Math.min(w,h)*0.08} fill={color} fillOpacity={Math.min(1,st.opacity+(sel?.12:0))} stroke={stroke} strokeWidth={(sel||hov?2.2:1.3)/zoom}/>
                     {oa&&<path d={`M${eq.pos.x-w/2},${eq.pos.y-h/2}L${eq.pos.x+w/2},${eq.pos.y+h/2}M${eq.pos.x+w/2},${eq.pos.y-h/2}L${eq.pos.x-w/2},${eq.pos.y+h/2}`} stroke={color} strokeWidth={1/zoom} pointerEvents="none"/>}
@@ -1217,9 +1097,23 @@ export default function App(){
                       {eq.tag||t.prefix}{oa?` · ${sub}`:''}</text>
                     {!oa&&<text x={eq.pos.x} y={eq.pos.y+fs*0.95} textAnchor="middle" fontSize={fs*0.8} fill="#334155" stroke="white" strokeWidth={fs*0.2} paintOrder="stroke" pointerEvents="none">{sub}</text>}
                   </g>;}))}
-                {tool==='equip'&&hover&&(()=>{const g=newEquip(placeType),{w,h}=symbolPt(g),ok=!!roomAt(hover),c=ok?styleOf(placeType).color:'#dc2626';
+                {tool==='equip'&&hover&&(()=>{const g={...newEquip(placeType),rot:placeRot%180},{w,h}=symbolPt(g),ok=!!roomAt(hover),c=ok?styleOf(placeType).color:'#dc2626';
                   return <g pointerEvents="none" opacity={.6}><rect x={hover.x-w/2} y={hover.y-h/2} width={w} height={h} fill={c} fillOpacity={.15} stroke={c} strokeWidth={1.5/zoom} strokeDasharray={`${4/zoom} ${3/zoom}`}/>
                     {g.method==='oa'&&<path d={`M${hover.x-w/2},${hover.y-h/2}L${hover.x+w/2},${hover.y+h/2}M${hover.x+w/2},${hover.y-h/2}L${hover.x-w/2},${hover.y+h/2}`} stroke={c} strokeWidth={1/zoom}/>}</g>;})()}
+                {settings.layers.fixtures&&rooms.map(room=>(room.fixtures??[]).map(f=>{const t=fixType(f.typeId);if(!t)return null;
+                  const sel=f.id===selectedFix,live=tool==='select'&&fixLive,lost=sel&&dropTarget===null,c=lost?'#dc2626':styleOf(FIXTURE_STYLE).color;
+                  const w=t.size.w*ptPerFt,h=t.size.h*ptPerFt,ext=(f.rot%180?w:h)/2,fs=Math.max(2.5,Math.min(w,h)*0.3);
+                  return <g key={f.id} className={live?'hvac-equip-sym':undefined} pointerEvents={live?'all':'none'} opacity={fixLive?1:0.35}
+                    onPointerDown={e=>startFixDrag(e,room,f)}>
+                    <g transform={`translate(${f.pos.x} ${f.pos.y}) rotate(${f.rot})`}>
+                      <rect x={-w/2} y={-h/2} width={w} height={h} fill="transparent"/>
+                      <FixtureSymbol symbol={t.symbol} w={w} h={h} stroke={sel?'#f97316':c} fill={c} fillOpacity={Math.min(1,styleOf(FIXTURE_STYLE).opacity+(sel?.12:0))} sw={(sel?2:1.1)/zoom}/>
+                    </g>
+                    <text x={f.pos.x} y={f.pos.y+ext+fs*1.05} textAnchor="middle" fontSize={fs} fontWeight={700} fill={lost?'#b91c1c':'#0f172a'} stroke="white" strokeWidth={fs*0.25} paintOrder="stroke" pointerEvents="none">{t.tag}</text>
+                  </g>;}))}
+                {tool==='fixture'&&hover&&(()=>{const t=fixType(placeFixType);if(!t)return null;const ok=!!roomAt(hover),c=ok?styleOf(FIXTURE_STYLE).color:'#dc2626';
+                  return <g pointerEvents="none" opacity={.6} transform={`translate(${hover.x} ${hover.y}) rotate(${placeRot})`}>
+                    <FixtureSymbol symbol={t.symbol} w={t.size.w*ptPerFt} h={t.size.h*ptPerFt} stroke={c} fill={c} fillOpacity={.15} sw={1.2/zoom}/></g>;})()}
                 {marquee&&(()=>{const win=marquee.b.x>=marquee.a.x,c=win?'#2563eb':'#16a34a';
                   return <rect x={Math.min(marquee.a.x,marquee.b.x)} y={Math.min(marquee.a.y,marquee.b.y)} width={Math.abs(marquee.b.x-marquee.a.x)} height={Math.abs(marquee.b.y-marquee.a.y)}
                     fill={c} fillOpacity={.08} stroke={c} strokeWidth={1/zoom} strokeDasharray={win?undefined:`${5/zoom} ${3/zoom}`} pointerEvents="none"/>;})()}
@@ -1230,12 +1124,17 @@ export default function App(){
             </div>
           </div>}
       </main>
+      {settings.table.open&&<RoomTable rooms={rooms} metricsOf={mOf} ctx={{tpl:templateName}} saved={settings.reports}
+        viewId={settings.table.view??activeModule.report} setViewId={id=>setSettings(st=>({...st,table:{...st.table,view:id===activeModule.report?null:id}}))}
+        selIds={selIds} onRowClick={tableRowClick} onEdit={(id,ch)=>{pushHistory();updateRoom(ch,id);}}
+        onOpenReports={id=>{setReportsInitial(id);setReportsOpen(true);}} onClose={()=>runAction('table')}
+        height={settings.table.height} setHeight={h=>setSettings(st=>({...st,table:{...st.table,height:h}}))} moduleName={activeModule.name}
+        following={settings.table.view===null} onFollow={()=>setSettings(st=>({...st,table:{...st.table,view:null}}))}/>}
+      </div>
       <SidePanel side="right" title="Properties" open={settings.rightOpen} onToggle={()=>setSettings(st=>({...st,rightOpen:!st.rightOpen}))}>
         <Section title="Drawing" open={secOpen('drawing')} onToggle={()=>toggleSec('drawing')} aside={scale==='custom'?(feetPerPoint?'calibrated':'not calibrated'):scales.find(x=>x[0]===scale)?.[1]}>
           <div className="hvac-row"><span>Scale</span><strong>{scale==='custom'?(feetPerPoint?`${fmt(1/feetPerPoint)} pts / ft`:'Not calibrated'):scales.find(x=>x[0]===scale)?.[1]}</strong></div>
           {pdf&&pdf.numPages>1&&<div className="hvac-row"><span>PDF page</span><select value={pageNumber} onChange={e=>{const next=Number(e.target.value);e.currentTarget.blur();if(next===pageNumber)return;if(rooms.length&&!window.confirm('Switching PDF pages currently clears room takeoffs. Save your project first. Continue?'))return;setPageNumber(next);setRooms([]);setDraft([]);setSelectedId(null);}}>{Array.from({length:pdf.numPages},(_,i)=><option key={i} value={i+1}>{i+1}</option>)}</select></div>}
-          <div className="hvac-field"><label>Site altitude (ft)</label><NumField value={altitudeFt} onChange={setAltitudeFt}/>
-            <div className="hvac-muted hvac-load-eq">Sensible heat factor {sensibleFactor(altitudeFt).toFixed(3)} BTU/h·cfm·°F (1.08 at sea level)</div></div>
           {selected&&selIds.length<=1&&<>
             <div className="hvac-subhead">{selected.name}</div>
             <div className="hvac-field"><label>Label size (pt)</label><div className="hvac-inline"><NumField value={selected.labelSize??DEFAULT_LABEL_SIZE} min={2} onChange={v=>updateRoom({labelSize:Math.min(72,v)})}/>
@@ -1267,7 +1166,7 @@ export default function App(){
           <div className="hvac-row"><span>Length</span><strong>{feetPerPoint===null?`${fmt(edgeLen)} pts`:fmtFeet(edgeLen*feetPerPoint)}</strong></div>
           <p className="hvac-muted">Arrow keys move this wall 1" (Shift: 1'-0"). Neighbouring walls stretch to follow and keep their angles. Esc deselects.</p>
         </Section>}
-        {selected&&selIds.length<=1&&(()=>{const m=mOf(selected),net=m.area,occ=m.occupants,vbz=m.vbz,loadW=m.loadW,totalW=m.totalW;
+        {selected&&selIds.length<=1&&(()=>{const m=mOf(selected),net=m.area;
           const tpl=findTemplate(selected.template);
           const tag=(match:boolean)=><div className={`hvac-tpl-tag${tpl&&match?'':' custom'}`}>Template: <strong>{tpl&&match?tpl.name:'Custom'}</strong></div>;
           const cfm=(v:number|null)=>v===null?'—':`${fmt(v)} cfm`;
@@ -1295,164 +1194,64 @@ export default function App(){
               :cutoutsOf(selected).length>0&&<div className="hvac-area-note">{fmt(m.gross!)} SF gross − {fmt(m.cutouts!)} SF in {cutoutsOf(selected).length} cutout{cutoutsOf(selected).length>1?'s':''}</div>}
             <button className="hvac-btn danger" style={{width:'100%'}} onClick={deleteRoom}><Trash2 size={15}/> Delete Room</button>
           </Section>
-          <Section title="ASHRAE 62.1 Ventilation" open={secOpen('ashrae')} onToggle={()=>toggleSec('ashrae')} aside={<span className={m.oaShort?'hvac-bad-text':undefined}>{cfm(m.voz)}</span>}>
-            {tag(!!tpl&&ashraeMatches(selected,tpl))}
-            <div className="hvac-field"><label>Occupancy</label><div className="hvac-inline">
-              <NumField value={selected.occupancy.value} onChange={v=>updateRoom({occupancy:{...selected.occupancy,value:v}})}/>
-              <select value={selected.occupancy.unit} onChange={e=>updateRoom({occupancy:{...selected.occupancy,unit:e.target.value as OccUnit}})}>
-                {OCC_UNITS.map(([u,l])=><option key={u} value={u}>{l}</option>)}</select></div></div>
-            {selected.occupancy.unit!=='people'&&<div className="hvac-row"><span>Occupants (P<sub>z</sub>)</span><strong>{occ===null?'Calibrate first':fmt(occ)}</strong></div>}
-            <div className="hvac-field"><label>People outdoor air rate, R<sub>p</sub> (cfm/person)</label><NumField value={selected.rp} onChange={v=>updateRoom({rp:v})}/></div>
-            <div className="hvac-field"><label>Area outdoor air rate, R<sub>a</sub> (cfm/SF)</label><NumField value={selected.ra} onChange={v=>updateRoom({ra:v})}/></div>
-            <div className="hvac-field"><label>Zone air distribution effectiveness, E<sub>z</sub></label><NumField value={selected.ez} min={0.01} onChange={v=>updateRoom({ez:v})}/></div>
-            <div className="hvac-row"><span>V<sub>bz</sub> = R<sub>p</sub>·P<sub>z</sub> + R<sub>a</sub>·A<sub>z</sub></span><strong>{cfm(vbz)}</strong></div>
-            <div className="hvac-row hvac-result"><span>Required OA, V<sub>oz</sub> = V<sub>bz</sub> / E<sub>z</sub></span><strong>{cfm(m.voz)}</strong></div>
-            <div className="hvac-row hvac-result"><span>Provided OA (from equipment)</span><strong className={m.oaShort?'hvac-bad-text':undefined}>{cfm(m.oa)}</strong></div>
-            {m.oaShort&&<div className="hvac-bad-note">{fmt(m.voz!-m.oa)} cfm below the required {cfm(m.voz)}.{' '}
-              <button className="hvac-linkbtn" onClick={()=>addEquipTo(selected,OA_DIFFUSER)}>Add an OA diffuser for {fmt(roundUp5(m.voz!-m.oa))} cfm</button></div>}
-            {!selected.equipment.length&&<p className="hvac-muted">Outdoor air comes from the room's equipment: each unit's airflow × its % OA, plus OA diffusers.</p>}
-          </Section>
-          <Section title="Loads" open={secOpen('loads')} onToggle={()=>toggleSec('loads')} aside={totalW===null?undefined:`${fmt(totalW*BTUH_PER_W)} BTU/h`}>
-            {tag(!!tpl&&loadsMatch(selected,tpl))}
-            {selected.loads.map((l,k)=><div className="hvac-load" key={l.id}>
-              <input className="hvac-load-name" value={l.name} aria-label="Load name" onChange={e=>updateRoom({loads:selected.loads.map((x,j)=>j===k?{...x,name:e.target.value}:x)})}/>
-              <div className="hvac-inline">
-                <NumField value={l.value} onChange={v=>updateRoom({loads:selected.loads.map((x,j)=>j===k?{...x,value:v}:x)})}/>
-                <select value={l.unit} onChange={e=>updateRoom({loads:selected.loads.map((x,j)=>j===k?{...x,unit:e.target.value as LoadUnit}:x)})}>{LOAD_UNITS.map(u=><option key={u} value={u}>{u}</option>)}</select>
-                <button className="hvac-btn icon-only" title="Remove load" onClick={()=>updateRoom({loads:selected.loads.filter((_,j)=>j!==k)})}><Trash2 size={13}/></button>
-              </div>
-              {loadW[k]!==null&&l.unit!=='W'&&<div className="hvac-muted hvac-load-eq">= {fmt(loadW[k]!)} W</div>}
-            </div>)}
-            <button className="hvac-btn" style={{width:'100%',marginTop:4}} onClick={()=>updateRoom({loads:[...selected.loads,{id:newId(),name:'Load',value:0,unit:'W'}]})}><Plus size={14}/> Add load</button>
-            <div className="hvac-row"><span>Internal loads</span><strong>{totalW===null?'Calibrate first':`${fmt(totalW)} W · ${btu(totalW*BTUH_PER_W)}`}</strong></div>
-            <div className="hvac-row"><span>Load density</span><strong>{totalW===null||!net?'—':`${fmt(totalW/net)} W/SF`}</strong></div>
-            <div className="hvac-field"><label>People sensible heat (BTU/h per person)</label><NumField value={selected.peopleSensible} onChange={v=>updateRoom({peopleSensible:v})}/>
-              <div className="hvac-muted hvac-load-eq">{occ===null?'—':`${fmt(occ)} people → ${btu(m.peopleBtuh)}`}</div></div>
-            <div className="hvac-row hvac-result"><span>Sensible cooling load</span><strong>{btu(m.coolingLoad)}</strong></div>
-          </Section>
-          <Section title="Mechanical Equipment" open={secOpen('hvac')} onToggle={()=>toggleSec('hvac')}
-            aside={selected.equipment.length?<span className={m.coolingShort||m.heatingShort||m.oaShort?'hvac-bad-text':'hvac-ok-text'}>{selected.equipment.length} unit{selected.equipment.length>1?'s':''} · {m.coolingShort||m.heatingShort?'short':'OK'}</span>:undefined}>
-            <div className="hvac-mech-summary">
-              <Meter label="Cooling" have={m.coolCap} need={m.coolingLoad} short={m.coolingShort}/>
-              <Meter label="Heating" have={m.heatCap} need={m.heatingLoad} short={m.heatingShort}/>
-              <div className="hvac-row"><span>Supply air</span><strong>{cfm(m.supply)}{m.achSupply?` · ${fmt(m.achSupply)} ACH`:''}</strong></div>
-              <div className="hvac-row"><span>Outdoor air</span><strong className={m.oaShort?'hvac-bad-text':undefined}>{fmt(m.oa)}{m.voz?` / ${fmt(m.voz)}`:''} cfm</strong></div>
-              {m.coolingShort&&m.coolingLoad!==null&&<div className="hvac-bad-note">Cooling is short {btu(m.coolingLoad-m.coolCap)}: about {fmt(roundUp5((m.coolingLoad-m.coolCap)/(m.factor*Math.max(1,selected.coolSetpoint-m.designLat))))} more cfm at {fmt(m.designLat)} °F.</div>}
-              {m.heatingShort&&m.heatingLoad!==null&&<div className="hvac-bad-note">Heating is short {btu(m.heatingLoad-m.heatCap)}.</div>}
-            </div>
-            <div className="hvac-quick-add">
-              <button className="hvac-btn" title="Add a VAV box with reheat" onClick={()=>addEquipTo(selected,'VAV w/ Reheat')}><Plus size={13}/> VAV</button>
-              <button className="hvac-btn" title="Add a fan coil unit" onClick={()=>addEquipTo(selected,'Fan Coil')}><Plus size={13}/> FCU</button>
-              <button className="hvac-btn" title="Add a square diffuser delivering separate outdoor air" onClick={()=>addEquipTo(selected,OA_DIFFUSER)}><Plus size={13}/> OA</button>
-              <select className="hvac-btn" value="" aria-label="Add other equipment" onChange={e=>{if(e.target.value)addEquipTo(selected,e.target.value);e.currentTarget.blur();}}>
-                <option value="">More</option>{EQUIP_TYPES.filter(t=>!['VAV w/ Reheat','Fan Coil',OA_DIFFUSER].includes(t.type)).map(t=><option key={t.type}>{t.type}</option>)}</select>
-            </div>
-            {!selected.equipment.length&&<p className="hvac-muted">New units are sized for whatever load is left, placed in an open spot, and drawn on the plan. Drag them into position, or press {sc('equip')} and click in any room.</p>}
-            {selected.equipment.map((e,k)=>{const res=m.equip[k],t=equipType(e.type),open=e.id===selectedEquip,oa=e.method==='oa';
-              const up=(ch:Partial<Equip>)=>updateEquipIn(selected.id,e.id,ch);
-              const toggle=()=>open?setSelectedEquip(null):selectEquip(selected.id,e.id);
-              const headNum=e.method==='capacity'?btu(e.cools?e.coolCap:e.heatCap):cfm(equipSupply(e));
-              return <div key={e.id} ref={el=>{if(el)cardRefs.current.set(e.id,el);else cardRefs.current.delete(e.id);}}
-                className={`hvac-eqcard${open?' open':''}${e.id===hoverEquip?' hover':''}`} onMouseEnter={()=>setHoverEquip(e.id)} onMouseLeave={()=>setHoverEquip(null)}>
-                <div className="hvac-eqcard-head" role="button" tabIndex={0} aria-expanded={open} onClick={toggle}
-                  onKeyDown={ev=>{if(ev.key==='Enter'){ev.preventDefault();toggle();}}}>
-                  <ChevronRight size={13} className="hvac-chev"/>
-                  <span className="hvac-swatch" style={{background:styleOf(e.type).color,borderRadius:oa?1:3}}/>
-                  <strong>{e.tag||t.prefix}</strong><span className="hvac-eqcard-type">{e.type}</span>
-                  <span className="hvac-eqcard-num">{headNum}</span>
-                  <button className="hvac-btn icon-only" title={`Remove ${e.tag||e.type}`} onClick={ev=>{ev.stopPropagation();removeEquip(selected.id,e.id);}}><Trash2 size={13}/></button>
-                </div>
-                {open&&<div className="hvac-eqcard-body">
-                  <div className="hvac-grid2">
-                    <div className="hvac-field"><label>Type</label><select value={e.type} onChange={ev=>{const d=newEquip(ev.target.value);
-                      up({...d,id:e.id,tag:e.tag,pos:e.pos,rot:e.rot,coolCfm:e.coolCfm,heatCfm:e.heatCfm,coolCap:e.coolCap,heatCap:e.heatCap});}}>
-                      {EQUIP_TYPES.map(x=><option key={x.type}>{x.type}</option>)}</select></div>
-                    <div className="hvac-field"><label>Tag</label><input value={e.tag} onChange={ev=>up({tag:ev.target.value})}/></div>
-                  </div>
-                  {oa?<>
-                    <div className="hvac-field"><label>Outdoor air (cfm)</label><NumField value={e.coolCfm} onChange={v=>up({coolCfm:v,heatCfm:v})}/></div>
-                    <div className="hvac-grid2">
-                      <div className="hvac-field"><label>Summer LAT (°F)</label><NumField value={e.coolLat} min={-100} onChange={v=>up({coolLat:v})}/></div>
-                      <div className="hvac-field"><label>Winter LAT (°F)</label><NumField value={e.heatLat} min={-100} onChange={v=>up({heatLat:v})}/></div>
-                    </div>
-                    <div className="hvac-muted hvac-eq-line">Cooling effect {btu(res.cool)} · heating effect {btu(res.heatToRoom)}{res.heatToRoom<0?' (adds to the heating load)':''}</div>
-                  </>:e.method==='air'?<>
-                    <div className="hvac-checks"><label><input type="checkbox" checked={e.cools} onChange={ev=>up({cools:ev.target.checked})}/> Cooling</label>
-                      <label><input type="checkbox" checked={e.heats} onChange={ev=>up({heats:ev.target.checked})}/> Heating</label></div>
-                    {e.cools&&<><div className="hvac-grid3">
-                      <div className="hvac-field"><label>Cooling cfm</label><NumField value={e.coolCfm} onChange={v=>up(e.type==='Fan Coil'?{coolCfm:v,heatCfm:v}:{coolCfm:v})}/></div>
-                      <div className="hvac-field"><label>LAT (°F)</label><NumField value={e.coolLat} min={-100} onChange={v=>up({coolLat:v})}/></div>
-                      <div className="hvac-field"><label>% OA</label><NumField value={e.oaPct} onChange={v=>up({oaPct:Math.min(100,v)})}/></div></div>
-                      <div className="hvac-muted hvac-eq-line">Sensible cooling {btu(res.cool)} · OA {cfm(res.oa)}</div></>}
-                    {e.heats&&<><div className="hvac-grid3">
-                      <div className="hvac-field"><label>Heating cfm</label><NumField value={e.heatCfm} onChange={v=>up(e.type==='Fan Coil'?{coolCfm:v,heatCfm:v}:{heatCfm:v})}/></div>
-                      <div className="hvac-field"><label>EAT (°F)</label><NumField value={e.heatEat} min={-100} onChange={v=>up({heatEat:v})}/></div>
-                      <div className="hvac-field"><label>LAT (°F)</label><NumField value={e.heatLat} min={-100} onChange={v=>up({heatLat:v})}/></div></div>
-                      {!e.cools&&<div className="hvac-field"><label>% OA</label><NumField value={e.oaPct} onChange={v=>up({oaPct:Math.min(100,v)})}/></div>}
-                      <div className="hvac-muted hvac-eq-line">To room {btu(res.heatToRoom)} · <strong>Coil {fmt(res.coil/1000)} MBH</strong> ({fmt(res.coil/BTUH_PER_W/1000)} kW)</div>
-                      {res.ezWarning&&<div className="hvac-warn-note">LAT is ≥15 °F above the space: with ceiling supply and return, Ez drops to 0.8 (ASHRAE 62.1 Table 6-4).</div>}</>}
-                    {e.cools&&e.heats&&e.heatCfm>0&&e.heatCfm<e.coolCfm&&e.oaPct>0&&<div className="hvac-muted hvac-eq-line">OA is counted at the heating (minimum) airflow.</div>}
-                  </>:<div className="hvac-grid2">
-                    <div className="hvac-checks" style={{gridColumn:'1 / -1'}}><label><input type="checkbox" checked={e.cools} onChange={ev=>up({cools:ev.target.checked})}/> Cooling</label>
-                      <label><input type="checkbox" checked={e.heats} onChange={ev=>up({heats:ev.target.checked})}/> Heating</label></div>
-                    {e.cools&&<div className="hvac-field"><label>Cooling capacity (BTU/h)</label><NumField value={e.coolCap} onChange={v=>up({coolCap:v})}/></div>}
-                    {e.heats&&<div className="hvac-field"><label>Heating capacity (BTU/h)</label><NumField value={e.heatCap} onChange={v=>up({heatCap:v})}/></div>}
-                  </div>}
-                  <div className="hvac-eqcard-size">
-                    <span className="hvac-muted">Symbol (ft)</span>
-                    <NumField value={equipSize(e).w} min={0.25} title="Width (ft)" onChange={v=>up({size:{...equipSize(e),w:v}})}/><span className="hvac-muted">×</span>
-                    <NumField value={equipSize(e).h} min={0.25} title="Depth (ft)" onChange={v=>up({size:{...equipSize(e),h:v}})}/>
-                    <button className="hvac-btn icon-only" title="Rotate 90°" onClick={()=>{pushHistory();up({rot:((e.rot??0)+90)%180});}}><RotateCw size={14}/></button>
-                  </div>
-                  <div className="hvac-eqcard-actions">
-                    <button className="hvac-btn" title="Duplicate (Ctrl/Cmd+D)" onClick={()=>cloneInto(e,selected)}><Copy size={13}/> Duplicate</button>
-                    <button className="hvac-btn hvac-btn-del" title="Delete (Del)" onClick={()=>removeEquip(selected.id,e.id)}><Trash2 size={13}/> Delete</button>
-                  </div>
-                </div>}
-              </div>;})}
-            <div className="hvac-subhead">Design conditions</div>
-            <div className="hvac-grid2">
-              <div className="hvac-field"><label>Cooling setpoint (°F)</label><NumField value={selected.coolSetpoint} onChange={v=>updateRoom({coolSetpoint:v})}/></div>
-              <div className="hvac-field"><label>Heating setpoint (°F)</label><NumField value={selected.heatSetpoint} onChange={v=>updateRoom({heatSetpoint:v})}/></div>
-            </div>
-            <div className="hvac-row"><span>Cooling load (from Loads)</span><strong>{btu(m.coolingLoad)}</strong></div>
-            <div className="hvac-field"><label>Heating load</label><div className="hvac-inline">
-              <NumField value={selected.heatingLoad.value} onChange={v=>updateRoom({heatingLoad:{...selected.heatingLoad,value:v}})}/>
-              <select value={selected.heatingLoad.unit} onChange={e=>updateRoom({heatingLoad:{...selected.heatingLoad,unit:e.target.value as LoadUnit}})}>{LOAD_UNITS.map(u=><option key={u} value={u}>{u}</option>)}</select></div>
-              {selected.heatingLoad.unit!=='BTU/h'&&<div className="hvac-muted hvac-load-eq">= {btu(m.heatingLoad)}</div>}</div>
-            {m.coilTotal>0&&<div className="hvac-row"><span>Total heating coil</span><strong>{`${fmt(m.coilTotal/1000)} MBH · ${fmt(m.coilTotal/BTUH_PER_W/1000)} kW`}</strong></div>}
-            <p className="hvac-muted">Q = {m.factor.toFixed(3)} × cfm × ΔT{altitudeFt>0?` (1.08 corrected for ${fmt(altitudeFt)} ft)`:''}. Coil = {m.factor.toFixed(3)} × heating cfm × (LAT − EAT).</p>
-          </Section>
+          {(()=>{const ctx:ModuleCtx={room:selected,m,tpl,settings,altitudeFt,env,openSettings,openLibrary,addLibToRoom,secOpen,toggleSec,updateRoom,pushHistory,tag,cfm,btu,sc,
+            selectedEquip,setSelectedEquip,hoverEquip,setHoverEquip,cardRefs,selectEquip,addEquipTo,removeEquip,updateEquipIn,cloneInto,styleOf,roundUp5,
+            fixtureTypes,selectedFix,selectFixture,addFixtureTo,removeFixture,openLibraries:()=>openLibraries('plumbing'),openSchedule:()=>{setReportsInitial('fixture-schedule');setReportsOpen(true);},startPlacing:(typeId:string)=>{setPlaceFixType(typeId);switchTool('fixture');setPlaceFixType(typeId);}};
+            return <>
+              {activeModule.Sections(ctx)}
+              {MODULES.filter(x=>x.id!==activeModule.id).map(x=>{const sm=x.summary(selected,m);
+                return <button key={x.id} className="hvac-mod-summary" title={`Switch to ${x.name}`} onClick={()=>switchModule(x.id)}>
+                  <span>{x.name}</span><span className={sm.bad?'hvac-bad-text':undefined}>{sm.text}</span><ChevronRight size={14}/></button>;})}
+            </>;})()}
           </>;})()}
       </SidePanel>
     </div>
-    {reportsOpen&&<Reports rooms={rooms} feetPerPoint={feetPerPoint} altitudeFt={altitudeFt} projectName={projectName} saved={settings.reports}
-      setSaved={next=>setSettings(st=>({...st,reports:next}))} templateName={templateName} onClose={()=>setReportsOpen(false)}/>}
+    {libraryOpen!==false&&<Libraries tab={libraryOpen.tab} setTab={tab=>setLibraryOpen({tab,item:null})} onClose={()=>setLibraryOpen(false)}>
+      {libraryOpen.tab==='heat'
+        ?<EquipmentLibrary library={library} setLibrary={updateLibrary} usage={libUsage} initialId={libraryOpen.item}
+          onDeleteItem={deleteLibItem} selectedRoom={selected&&selIds.length<=1?selected.name:null} onAddToRoom={id=>{if(selected)addLibToRoom(selected,id);}}/>
+        :<PlumbingLibrary types={fixtureTypes} setTypes={setFixtureTypes} usage={fixUsage} onDeleteType={deleteFixtureType}
+          selectedRoom={selected&&selIds.length<=1?selected.name:null} onAddToRoom={id=>{if(selected)addFixtureTo(selected,id);}}/>}
+    </Libraries>}
+    {reportsOpen&&<Reports rooms={rooms} feetPerPoint={feetPerPoint} env={env} projectName={projectName} saved={settings.reports}
+      setSaved={next=>setSettings(st=>({...st,reports:next}))} templateName={templateName} initialId={reportsInitial} onClose={()=>setReportsOpen(false)}/>}
     {settingsOpen&&<div className="hvac-modal-backdrop" onPointerDown={e=>{if(e.target===e.currentTarget){setSettingsOpen(false);setCapturing(null);}}}>
       <div className="hvac-modal" role="dialog" aria-label="Settings">
         <header><strong>Settings</strong><IconBtn tip="Close (Esc)" onClick={()=>{setSettingsOpen(false);setCapturing(null);}}><X size={17}/></IconBtn></header>
-        <section>
-          <h4>Keyboard shortcuts</h4>
+        <Section title="Project" open={secOpen('set-project')} onToggle={()=>toggleSec('set-project')} aside="saved with this project">
+          <div className="hvac-grid2">
+            <div className="hvac-field"><label>Site altitude (ft)</label><NumField value={altitudeFt} onChange={setAltitudeFt}/></div>
+            <div className="hvac-field"><label>People sensible heat (BTU/h per person)</label><NumField value={peopleSensible} onChange={setPeopleSensible}/></div>
+          </div>
+          <p className="hvac-muted">Altitude corrects the sensible heat factor: {sensibleFactor(altitudeFt).toFixed(3)} BTU/h·cfm·°F (1.08 at sea level). People heat is added to every room's cooling load (ASHRAE: about 245–250 for office work).</p>
+        </Section>
+        <Section title="Reference data" open={secOpen('set-ref')} onToggle={()=>toggleSec('set-ref')} aside={`${REFERENCE_FILES.reduce((t,f)=>t+verifiedCount(f.data),0)} of ${REFERENCE_FILES.reduce((t,f)=>t+f.data.rows.length,0)} rows verified`}>
+          <p className="hvac-muted">Code tables live as JSON files in <code>src/reference/</code>. Check them against the printed tables, mark rows verified, and run <code>node src/reference/check-reference.mjs</code>. See the README in that folder.</p>
+          <table className="hvac-ref-table"><tbody>{REFERENCE_FILES.map(f=>{const v=verifiedCount(f.data),n=f.data.rows.length;
+            return <tr key={f.file}><td><strong>{f.data.meta.standard} {f.data.meta.edition} {f.data.meta.table}</strong><div className="hvac-muted">{f.file}</div></td>
+              <td className={v===n?'hvac-ok-text':'hvac-unverified-text'}>{v}/{n} verified</td></tr>;})}</tbody></table>
+          {referenceIssues.length>0&&<div className="hvac-bad-note">{referenceIssues.map((x,i)=><div key={i}>{x}</div>)}</div>}
+        </Section>
+        <Section title="Keyboard shortcuts" open={secOpen('set-keys')} onToggle={()=>toggleSec('set-keys')}>
           <p className="hvac-muted">Click a key, then press the new key. If it's already in use, the two actions swap keys.</p>
           {ACTIONS.map(a=><div className="hvac-row" key={a.id}><span>{a.label}</span>
             <button className={`hvac-key${capturing===a.id?' capturing':''}`} onClick={()=>{setCapturing(capturing===a.id?null:a.id);setCaptureNote('');}}>{capturing===a.id?'Press a key…':keyLabel(settings.shortcuts[a.id])}</button></div>)}
           {captureNote&&<p className="hvac-note">{captureNote}</p>}
           <button className="hvac-btn" style={{marginTop:10}} onClick={()=>{setSettings(st=>({...st,shortcuts:{...DEFAULT_SHORTCUTS}}));setCapturing(null);setCaptureNote('Shortcuts reset to defaults.');}}>Reset to defaults</button>
-        </section>
-        <section>
-          <h4>Controls</h4>
+        </Section>
+        <Section title="Controls" open={secOpen('set-controls')} onToggle={()=>toggleSec('set-controls')}>
           <div className="hvac-fixed">
             <span>Draw ({sc('draw')})</span><span>Drag for a rectangle, or click corners for a polygon. Close by clicking the first corner, double-clicking, or Enter.</span>
             <span>Cutout ({sc('cutout')})</span><span>Same as Draw; the shape is removed from the room it sits in.</span>
             <span>Select ({sc('select')})</span><span>Click a room, label, wall or piece of equipment. Drag a room to move it (with its equipment), a wall to resize, a label or its corner handle to move or resize it. Shift/Ctrl-click adds rooms to the selection. Drag on empty space to box-select: left→right picks rooms fully inside, right→left picks anything the box touches.</span>
             <span>Equipment ({sc('equip')})</span><span>Click inside a room to place. Drag a symbol to move it, even into another room.</span>
+            <span>Fixture ({sc('fixture')})</span><span>Plumbing module. Starts with the last fixture used; press it again to cycle through the project's fixtures. R rotates, click inside a room. Drag to move, even into another room.</span>
             <span>Wheel</span><span>Zoom</span>
             <span>{sc('fit')}</span><span>Fit page</span>
           </div>
           <p className="hvac-muted" style={{marginTop:8}}>Trace inside wall faces. Verify the printed scale against a known dimension before relying on areas.</p>
-        </section>
-        <section>
-          <h4>Equipment colors</h4>
+        </Section>
+        <Section title="Symbol colors" open={secOpen('set-colors')} onToggle={()=>toggleSec('set-colors')}>
           <p className="hvac-muted">Symbol colour and fill opacity for each equipment type on the plan.</p>
           <div className="hvac-colors">
             {EQUIP_TYPES.map(t=>{const st=styleOf(t.type),set=(ch:Partial<{color:string;opacity:number}>)=>setSettings(x=>({...x,equipStyle:{...x.equipStyle,[t.type]:{...st,...ch}}}));
@@ -1465,27 +1264,34 @@ export default function App(){
                 <span className="hvac-color-pct">{Math.round(st.opacity*100)}%</span>
               </div>;})}
           </div>
+          {(()=>{const st=styleOf(FIXTURE_STYLE),set=(ch:Partial<{color:string;opacity:number}>)=>setSettings(x=>({...x,equipStyle:{...x.equipStyle,[FIXTURE_STYLE]:{...st,...ch}}}));
+            return <div className="hvac-colors" style={{marginTop:6}}><div className="hvac-color-row">
+              <SymbolPreview symbol="lav" w={2} h={1.6} px={22} color={st.color}/>
+              <span>{FIXTURE_STYLE}</span>
+              <input type="color" value={st.color} aria-label="Plumbing fixture colour" onChange={e=>set({color:e.target.value})}/>
+              <input type="range" min={0} max={100} step={5} value={Math.round(st.opacity*100)} aria-label="Plumbing fixture fill opacity" onChange={e=>set({opacity:Number(e.target.value)/100})}/>
+              <span className="hvac-color-pct">{Math.round(st.opacity*100)}%</span></div></div>;})()}
           <button className="hvac-btn" style={{marginTop:10}} disabled={!Object.keys(settings.equipStyle).length} onClick={()=>setSettings(x=>({...x,equipStyle:{}}))}>Reset colors</button>
-        </section>
-        <section>
-          <h4>Fixed keys</h4>
+        </Section>
+        <Section title="Fixed keys" open={secOpen('set-fixed')} onToggle={()=>toggleSec('set-fixed')}>
           <div className="hvac-fixed">
             <span>Space + drag</span><span>Pan the drawing</span>
-            <span>Arrows</span><span>Nudge selected equipment, wall, label or room 1"</span>
+            <span>R</span><span>Rotate the symbol being placed, or the selected fixture / equipment</span>
+            <span>Arrows</span><span>Nudge selected equipment, fixture, wall, label or room 1"</span>
             <span>+ / −</span><span>Resize the selected label</span>
             <span>Shift + Arrows</span><span>Nudge 1'-0"</span>
             <span>Enter</span><span>Finish polygon</span>
             <span>Backspace</span><span>Remove last corner / selected cutout</span>
-            <span>Delete</span><span>Delete selected equipment, cutout or room</span>
+            <span>Delete</span><span>Delete selected equipment, fixture, cutout or room</span>
             <span>Ctrl/Cmd + A</span><span>Select all rooms</span>
             <span>Shift (while dragging)</span><span>Move straight horizontally or vertically</span>
-            <span>Ctrl/Cmd + D</span><span>Duplicate selected equipment</span>
-            <span>Ctrl/Cmd + C / V</span><span>Copy equipment / paste into the room under the cursor</span>
+            <span>Ctrl/Cmd + D</span><span>Duplicate selected equipment or fixture</span>
+            <span>Ctrl/Cmd + C / V</span><span>Copy equipment or a fixture / paste into the room under the cursor</span>
             <span>Esc</span><span>Cancel drawing, deselect a wall, then clear the selection</span>
             <span>Ctrl/Cmd + Z</span><span>Undo</span>
             <span>Ctrl/Cmd + S</span><span>Save project</span>
           </div>
-        </section>
+        </Section>
       </div>
     </div>}
     <footer className="hvac-status">{message} {dirty?" • Unsaved changes (Cmd+S)":""}</footer>

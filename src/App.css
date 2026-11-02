@@ -251,3 +251,141 @@
 .hvac-sel-list{display:flex;flex-wrap:wrap;gap:4px;margin:8px 0}
 .hvac-sel-chip{display:inline-flex;align-items:center;gap:4px;padding:3px 6px 3px 8px;border:1px solid #bfdbfe;border-radius:999px;background:#eff6ff;color:#1e3a8a;font-size:11.5px;cursor:pointer}
 .hvac-sel-chip:hover{background:#fee2e2;border-color:#fecaca;color:#b91c1c}
+
+/* Module switcher */
+.hvac-switch{display:inline-flex;padding:2px;border-radius:8px;background:#f1f5f9;border:1px solid #e2e8f0}
+.hvac-switch button{border:none;background:transparent;padding:5px 10px;border-radius:6px;font-size:12px;font-weight:600;color:#64748b;white-space:nowrap}
+.hvac-switch button:hover{color:#1e293b}
+.hvac-switch button.on{background:white;color:#1d4ed8;box-shadow:0 1px 3px #0f172a26}
+/* Other modules, collapsed to one line in the properties panel */
+.hvac-mod-summary{width:100%;display:grid;grid-template-columns:auto 1fr auto;align-items:center;gap:8px;padding:10px 12px 10px 16px;border:none;border-bottom:1px solid #e2e8f0;background:#f8fafc;text-align:left;font-size:12px;color:#334155}
+.hvac-mod-summary>span:first-child{font-weight:600;color:#0f172a}
+.hvac-mod-summary>span:nth-child(2){text-align:right;color:#64748b;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.hvac-mod-summary svg{color:#94a3b8}
+.hvac-mod-summary:hover{background:#eff6ff}
+/* Layers popover */
+.hvac-layers-wrap{position:relative}
+.hvac-layers{position:absolute;top:calc(100% + 6px);left:0;z-index:60;width:230px;padding:10px 12px;background:white;border:1px solid #e2e8f0;border-radius:8px;box-shadow:0 10px 30px #0f172a30;display:flex;flex-direction:column;gap:7px;font-size:12px}
+.hvac-layers label{display:flex;align-items:center;gap:7px;cursor:pointer;color:#334155}
+.hvac-layers input{accent-color:#2563eb}
+.hvac-layers p{margin:2px 0 0;font-size:11px}
+
+/* Room table drawer */
+.hvac-center{flex:1;min-width:0;display:flex;flex-direction:column}
+.hvac-center>.hvac-main{flex:1;min-height:0}
+.hvac-table{position:relative;display:flex;flex-direction:column;background:white;border-top:1px solid #cbd5e1;box-shadow:0 -4px 14px #0f172a12;min-height:110px}
+.hvac-table-grip{position:absolute;top:-4px;left:0;right:0;height:8px;cursor:ns-resize;z-index:2}
+.hvac-table-grip:hover{background:linear-gradient(#2563eb44,#2563eb44) center/60px 3px no-repeat}
+.hvac-table-bar{display:flex;align-items:center;gap:10px;padding:6px 10px;border-bottom:1px solid #e2e8f0;background:#f8fafc;font-size:12px}
+.hvac-table-bar select{padding:4px 6px;border:1px solid #cbd5e1;border-radius:6px;background:white;font-size:12px}
+.hvac-table-bar .hvac-muted{font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.hvac-table-bar .hvac-btn{padding:5px 8px;font-size:12px}
+.hvac-table-body{flex:1;overflow:auto}
+.hvac-table table{border-collapse:separate;border-spacing:0;font-size:12px;font-variant-numeric:tabular-nums;min-width:100%}
+.hvac-table th{position:sticky;top:0;z-index:1;background:#f1f5f9;color:#334155;font-weight:600;text-align:right;padding:6px 10px;border-bottom:1px solid #cbd5e1;white-space:nowrap;cursor:pointer;user-select:none}
+.hvac-table th:hover{background:#e2e8f0}
+.hvac-table th svg{vertical-align:-1px;margin-left:3px;color:#2563eb}
+.hvac-table td{text-align:right;padding:5px 10px;border-bottom:1px solid #f1f5f9;white-space:nowrap}
+.hvac-table .txt{text-align:left}
+.hvac-table tbody tr{cursor:pointer}
+.hvac-table tbody tr:hover td{background:#f8fafc}
+.hvac-table tbody tr.sel td{background:#eff6ff}
+.hvac-table td.bad{color:#b91c1c;background:#fef2f2 !important;font-weight:600}
+.hvac-table td.editable{cursor:text}
+.hvac-table td.editable:hover{box-shadow:inset 0 0 0 1px #93c5fd}
+.hvac-table td input{width:100%;min-width:60px;padding:2px 4px;border:1px solid #2563eb;border-radius:4px;font:inherit;text-align:inherit}
+.hvac-table tfoot td{position:sticky;bottom:0;background:#f8fafc;font-weight:700;border-top:2px solid #334155}
+.hvac-editable-dot{display:inline-block;width:5px;height:5px;margin-left:4px;border-radius:50%;background:#60a5fa;vertical-align:2px}
+
+/* Settings dialog: collapsible sections */
+.hvac-modal .hvac-sec-head{padding:12px 16px}
+.hvac-modal .hvac-sec-body{padding:2px 18px 16px 36px}
+.hvac-modal .hvac-sec:last-child{border-bottom:none}
+
+/* Equipment Library */
+.hvac-lib-sub{font-size:12px;color:#b5c4d8}
+.hvac-lib-body{flex:1;min-height:0;display:flex}
+.hvac-lib-list{width:260px;flex:none;overflow:auto;padding:10px;background:white;border-right:1px solid #dce3ed}
+.hvac-lib-item{width:100%;display:flex;flex-direction:column;align-items:flex-start;gap:2px;margin:3px 0;padding:9px 10px;border:1px solid #e2e8f0;border-radius:7px;background:white;text-align:left;color:#334155}
+.hvac-lib-item span{font-size:11.5px;color:#64748b}
+.hvac-lib-item.active{border-color:#2563eb;background:#eff6ff}
+.hvac-lib-editor{flex:1;min-width:0;overflow:auto;padding:16px 22px;background:white;margin:14px;border-radius:8px;box-shadow:0 4px 18px #64748b26}
+.hvac-lib-editor .hvac-field input{width:100%;border:1px solid #cbd5e1;border-radius:6px;padding:7px 8px;font:inherit}
+.hvac-lib-head{display:flex;align-items:flex-end;gap:12px}
+.hvac-lib-head .hvac-grow{flex:1}
+.hvac-lib-head .hvac-btn{margin-bottom:10px}
+.hvac-parts{width:100%;border-collapse:collapse;margin:8px 0 4px;font-size:12px}
+.hvac-parts th{text-align:right;padding:6px;color:#475569;font-weight:600;border-bottom:1px solid #cbd5e1;white-space:nowrap}
+.hvac-parts td{text-align:right;padding:4px 6px;border-bottom:1px solid #f1f5f9;vertical-align:middle;white-space:nowrap}
+.hvac-parts .txt{text-align:left}
+.hvac-parts input{width:64px;border:1px solid #cbd5e1;border-radius:5px;padding:4px 5px;font:inherit}
+.hvac-parts input.hvac-part-name{width:100%;min-width:140px}
+.hvac-parts select{border:1px solid #cbd5e1;border-radius:5px;padding:4px;font:inherit;background:white}
+.hvac-power{display:flex;align-items:center;gap:4px}
+.hvac-power span{color:#64748b}
+.hvac-power input{width:56px}
+.hvac-parts tfoot td{border-top:2px solid #334155;border-bottom:none;padding-top:8px}
+.hvac-parts .hvac-btn.icon-only{padding:3px;color:#94a3b8}
+.hvac-lib-totals{display:grid;grid-template-columns:repeat(3,1fr);gap:1px;margin:12px 0;max-width:460px;border:1px solid #e2e8f0;border-radius:8px;background:#e2e8f0;overflow:hidden}
+.hvac-lib-totals div{display:flex;flex-direction:column;align-items:center;padding:9px;background:#f8fafc}
+.hvac-lib-totals strong{font-size:15px;color:#0f172a}
+.hvac-lib-totals span{font-size:10.5px;text-transform:uppercase;letter-spacing:.04em;color:#64748b}
+/* Library items in a room's Loads */
+.hvac-load-lib .hvac-lib-icon{color:#7c3aed;flex:none}
+.hvac-lib-name{flex:1;text-align:left;font-weight:600;color:#5b21b6 !important;padding:2px 0 !important}
+.hvac-lib-qty{margin-top:4px;font-size:12px}
+.hvac-sec-body .hvac-lib-qty input{width:56px;flex:none}
+.hvac-lib-qty strong{margin-left:auto}
+.hvac-load-add{display:grid;grid-template-columns:auto 1fr;gap:5px;margin-top:6px}
+.hvac-sec-body .hvac-load-add select.hvac-btn{width:100%;min-width:0;height:auto;padding:6px;color:#5b21b6;font-weight:600}
+.hvac-modal .hvac-grid2{align-items:end}
+
+/* Reference data */
+.hvac-source{margin:-2px 0 8px;font-size:11px;color:#64748b}
+.hvac-unverified{margin-left:6px;padding:1px 6px;border-radius:999px;background:#fff7ed;color:#c2410c;border:1px solid #fed7aa;font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.03em}
+.hvac-unverified-text{color:#c2410c}
+.hvac-ref-table{width:100%;border-collapse:collapse;font-size:12px;margin-top:6px}
+.hvac-ref-table td{padding:6px 4px;border-bottom:1px solid #f1f5f9;vertical-align:top}
+.hvac-ref-table td:last-child{text-align:right;white-space:nowrap}
+.hvac-modal code{font-size:11px;background:#f1f5f9;padding:1px 4px;border-radius:3px}
+
+/* Libraries window: tabs and the plumbing fixture short list */
+.hvac-lib-tabs{display:inline-flex;gap:2px;margin-left:18px;padding:2px;border-radius:8px;background:#ffffff1a}
+.hvac-lib-tabs button{display:inline-flex;align-items:center;gap:6px;border:none;background:transparent;padding:6px 12px;border-radius:6px;font-size:12.5px;font-weight:600;color:#cbd5e1;white-space:nowrap}
+.hvac-lib-tabs button:hover{color:white}
+.hvac-lib-tabs button.on{background:white;color:#1d4ed8}
+.hvac-lib-actions{display:flex;align-items:center;gap:12px;padding:10px 16px;background:white;border-bottom:1px solid #dce3ed;flex-wrap:wrap}
+.hvac-lib-actions>.hvac-muted{flex:1;min-width:220px}
+.hvac-fix-item{flex-direction:row;align-items:center;gap:10px}
+.hvac-fix-item svg{flex:none}
+.hvac-fix-item-text{display:flex;flex-direction:column;gap:2px;min-width:0;font-size:13px}
+.hvac-fix-item-text>span{font-size:11px;color:#64748b}
+.hvac-catalog td,.hvac-catalog th{vertical-align:middle}
+.hvac-catalog tr.na td{color:#94a3b8}
+.hvac-catalog tbody tr:hover td{background:#f8fafc}
+.hvac-search{display:flex;align-items:center;gap:6px;border:1px solid #cbd5e1;border-radius:6px;padding:0 8px;background:white;color:#64748b}
+.hvac-lib-editor .hvac-search input{border:none;padding:7px 0;outline:none}
+.hvac-fix-preview{flex:none;display:grid;place-items:center;width:84px;height:84px;margin-bottom:10px;border:1px solid #e2e8f0;border-radius:8px;background:#f8fafc}
+.hvac-fix-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:4px 14px;max-width:560px;margin-top:10px}
+.hvac-fix-grid select{width:100%;border:1px solid #cbd5e1;border-radius:6px;padding:7px 8px;font:inherit}
+.hvac-ref-hint{margin-top:2px;font-size:11px;color:#94a3b8}
+.hvac-ref-hint.differs{color:#c2410c;font-weight:600}
+
+/* Plumbing module panel */
+.hvac-area-card.four{grid-template-columns:repeat(2,1fr)}
+.hvac-fix-list{margin:6px 0;display:flex;flex-direction:column;gap:3px}
+.hvac-fix-row{display:flex;align-items:center;gap:7px;padding:4px 4px 4px 6px;border:1px solid #e2e8f0;border-radius:7px;font-size:12px;cursor:pointer;user-select:none}
+.hvac-fix-row:hover{border-color:#94a3b8}
+.hvac-fix-row.active{border-color:#f97316;background:#fff7ed}
+.hvac-fix-row:focus-visible{outline:2px solid #2563eb;outline-offset:-2px}
+.hvac-fix-row-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#475569}
+.hvac-fix-row-num{color:#0f172a;font-variant-numeric:tabular-nums}
+.hvac-fix-row .hvac-btn.icon-only{padding:4px;color:#94a3b8}
+.hvac-fix-row .hvac-btn.icon-only:hover{color:#b91c1c;background:#fee2e2;border-color:transparent}
+.hvac-quick-add.fix{display:flex;flex-wrap:wrap}
+.hvac-schedule th.grp{text-align:center;border-bottom:1px solid #cbd5e1}
+.hvac-schedule td.sep,.hvac-schedule th:nth-child(4)+th{border-left:1px solid #cbd5e1}
+.hvac-schedule thead tr:last-child th:nth-child(4){border-left:1px solid #cbd5e1}
+.hvac-schedule tr.zero td{color:#94a3b8}
+.hvac-schedule tfoot td{font-weight:700;border-top:2px solid #334155}
+.hvac-in-project{margin-left:8px;padding:1px 6px;border-radius:999px;background:#ecfdf5;border:1px solid #a7f3d0;color:#047857;font-size:10.5px;font-weight:600}

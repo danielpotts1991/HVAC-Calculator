@@ -1,0 +1,42 @@
+{
+  "meta": {
+    "id": "upc-2021-wa-t610-3",
+    "standard": "UPC (Washington, WAC 51-56)",
+    "edition": "2021",
+    "table": "Table 610.3",
+    "title": "Water Supply Fixture Units (WSFU) and Minimum Fixture Branch Pipe Sizes",
+    "units": { "private": "WSFU", "public": "WSFU", "assembly": "WSFU", "branch": "minimum fixture branch pipe size, inches" },
+    "notes": [
+      "Values typed from memory, not from a copy of the code. Check each row against your copy and fill in \"verified\".",
+      "Washington adopts the 2021 UPC with amendments in WAC 51-56; the amendments reviewed did not change this table. Confirm against the current WAC.",
+      "Table footnote (verify): for fixtures with both hot and cold water, the separate cold and hot loads are each taken as 3/4 of the listed total. Rows with \"hot\": true use that rule.",
+      "null means the table gives no value for that occupancy."
+    ]
+  },
+  "rows": [
+    { "id": "bathtub", "fixture": "Bathtub or combination bath/shower (fill)", "branch": "1/2", "private": 4.0, "public": 4.0, "assembly": null, "hot": true, "verified": null },
+    { "id": "bidet", "fixture": "Bidet", "branch": "1/2", "private": 1.0, "public": null, "assembly": null, "hot": true, "verified": null },
+    { "id": "clothes-washer", "fixture": "Clothes washer", "branch": "1/2", "private": 4.0, "public": 4.0, "assembly": null, "hot": true, "verified": null },
+    { "id": "dishwasher-domestic", "fixture": "Dishwasher, domestic", "branch": "1/2", "private": 1.5, "public": 1.5, "assembly": null, "hot": true, "verified": null },
+    { "id": "drinking-fountain", "fixture": "Drinking fountain or water cooler", "branch": "1/2", "private": 0.5, "public": 0.5, "assembly": 0.75, "hot": false, "verified": null },
+    { "id": "hose-bibb", "fixture": "Hose bibb", "branch": "1/2", "private": 2.5, "public": 2.5, "assembly": null, "hot": false, "verified": null },
+    { "id": "hose-bibb-additional", "fixture": "Hose bibb, each additional", "branch": "1/2", "private": 1.0, "public": 1.0, "assembly": null, "hot": false, "verified": null },
+    { "id": "lavatory", "fixture": "Lavatory", "branch": "1/2", "private": 1.0, "public": 1.0, "assembly": 1.0, "hot": true, "verified": null },
+    { "id": "bar-sink", "fixture": "Sink, bar", "branch": "1/2", "private": 1.0, "public": 2.0, "assembly": null, "hot": true, "verified": null },
+    { "id": "clinical-sink", "fixture": "Sink, clinical", "branch": "3/4", "private": null, "public": 3.0, "assembly": null, "hot": true, "verified": null },
+    { "id": "kitchen-sink-domestic", "fixture": "Sink, kitchen, domestic", "branch": "1/2", "private": 1.5, "public": 1.5, "assembly": null, "hot": true, "verified": null },
+    { "id": "laundry-sink", "fixture": "Sink, laundry", "branch": "1/2", "private": 1.5, "public": 1.5, "assembly": null, "hot": true, "verified": null },
+    { "id": "service-sink", "fixture": "Sink or mop basin, service", "branch": "1/2", "private": 1.5, "public": 3.0, "assembly": null, "hot": true, "verified": null },
+    { "id": "washup-sink", "fixture": "Sink, washup, each set of faucets", "branch": "1/2", "private": null, "public": 2.0, "assembly": null, "hot": true, "verified": null },
+    { "id": "shower", "fixture": "Shower, per head", "branch": "1/2", "private": 2.0, "public": 2.0, "assembly": null, "hot": true, "verified": null },
+    { "id": "urinal-1gpf-valve", "fixture": "Urinal, 1.0 GPF flushometer valve", "branch": "3/4", "private": 3.0, "public": 4.0, "assembly": 5.0, "hot": false, "verified": null },
+    { "id": "urinal-gt1gpf-valve", "fixture": "Urinal, greater than 1.0 GPF flushometer valve", "branch": "3/4", "private": 4.0, "public": 5.0, "assembly": 6.0, "hot": false, "verified": null },
+    { "id": "urinal-tank", "fixture": "Urinal, flush tank", "branch": "1/2", "private": 2.0, "public": 2.0, "assembly": 3.0, "hot": false, "verified": null },
+    { "id": "wash-fountain", "fixture": "Wash fountain, circular spray", "branch": "3/4", "private": null, "public": 4.0, "assembly": null, "hot": true, "verified": null },
+    { "id": "wc-1.6-gravity", "fixture": "Water closet, 1.6 GPF gravity tank", "branch": "1/2", "private": 2.5, "public": 2.5, "assembly": 3.5, "hot": false, "verified": null },
+    { "id": "wc-1.6-flushometer-tank", "fixture": "Water closet, 1.6 GPF flushometer tank", "branch": "1/2", "private": 2.5, "public": 2.5, "assembly": 3.5, "hot": false, "verified": null },
+    { "id": "wc-1.6-valve", "fixture": "Water closet, 1.6 GPF flushometer valve", "branch": "1", "private": 5.0, "public": 5.0, "assembly": 8.0, "hot": false, "verified": null },
+    { "id": "wc-gt1.6-gravity", "fixture": "Water closet, greater than 1.6 GPF gravity tank", "branch": "1/2", "private": 3.0, "public": 5.5, "assembly": 7.0, "hot": false, "verified": null },
+    { "id": "wc-gt1.6-valve", "fixture": "Water closet, greater than 1.6 GPF flushometer valve", "branch": "1", "private": 7.0, "public": 8.0, "assembly": 10.0, "hot": false, "verified": null }
+  ]
+}

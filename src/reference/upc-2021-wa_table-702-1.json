@@ -1,0 +1,42 @@
+{
+  "meta": {
+    "id": "upc-2021-wa-t702-1",
+    "standard": "UPC (Washington, WAC 51-56)",
+    "edition": "2021",
+    "table": "Table 702.1",
+    "title": "Drainage Fixture Unit Values (DFU)",
+    "units": { "trap": "minimum trap and trap arm size, inches", "private": "DFU", "public": "DFU", "assembly": "DFU" },
+    "notes": [
+      "Values typed from memory, not from a copy of the code. Check each row against your copy and fill in \"verified\".",
+      "Washington adopts the 2021 UPC with amendments in WAC 51-56; the amendments reviewed did not change this table. Confirm against the current WAC.",
+      "null means the table gives no value for that occupancy."
+    ]
+  },
+  "rows": [
+    { "id": "bathtub", "fixture": "Bathtub or combination bath/shower", "trap": "1-1/2", "private": 2.0, "public": 2.0, "assembly": null, "verified": null },
+    { "id": "bidet", "fixture": "Bidet", "trap": "1-1/4", "private": 1.0, "public": null, "assembly": null, "verified": null },
+    { "id": "clothes-washer", "fixture": "Clothes washer, domestic, standpipe", "trap": "2", "private": 3.0, "public": 3.0, "assembly": 3.0, "verified": null },
+    { "id": "dishwasher-domestic", "fixture": "Dishwasher, domestic, with independent drain", "trap": "1-1/2", "private": 2.0, "public": 2.0, "assembly": 2.0, "verified": null },
+    { "id": "drinking-fountain", "fixture": "Drinking fountain or water cooler", "trap": "1-1/4", "private": 0.5, "public": 0.5, "assembly": 1.0, "verified": null },
+    { "id": "floor-drain", "fixture": "Floor drain", "trap": "2", "private": 2.0, "public": 2.0, "assembly": 2.0, "verified": null },
+    { "id": "floor-drain-emergency", "fixture": "Floor drain, emergency", "trap": "2", "private": null, "public": 0.0, "assembly": 0.0, "verified": null },
+    { "id": "floor-sink", "fixture": "Floor sink", "trap": "2", "private": null, "public": 2.0, "assembly": 2.0, "verified": null },
+    { "id": "lavatory", "fixture": "Lavatory", "trap": "1-1/4", "private": 1.0, "public": 1.0, "assembly": 1.0, "verified": null },
+    { "id": "bar-sink", "fixture": "Sink, bar", "trap": "1-1/2", "private": 1.0, "public": 2.0, "assembly": null, "verified": null },
+    { "id": "clinical-sink", "fixture": "Sink, clinical", "trap": "3", "private": null, "public": 6.0, "assembly": 6.0, "verified": null },
+    { "id": "kitchen-sink-domestic", "fixture": "Sink, kitchen, domestic", "trap": "1-1/2", "private": 2.0, "public": 2.0, "assembly": null, "verified": null },
+    { "id": "laundry-sink", "fixture": "Sink, laundry", "trap": "1-1/2", "private": 2.0, "public": 2.0, "assembly": 2.0, "verified": null },
+    { "id": "service-sink", "fixture": "Sink, service, mop basin", "trap": "2", "private": null, "public": 3.0, "assembly": 3.0, "verified": null },
+    { "id": "washup-sink", "fixture": "Sink, washup, each set of faucets", "trap": "1-1/2", "private": null, "public": 2.0, "assembly": 2.0, "verified": null },
+    { "id": "shower", "fixture": "Shower, single-head trap", "trap": "2", "private": 2.0, "public": 2.0, "assembly": 2.0, "verified": null },
+    { "id": "urinal-integral-1gpf", "fixture": "Urinal, integral trap, 1.0 GPF", "trap": "2", "private": 2.0, "public": 2.0, "assembly": 5.0, "verified": null },
+    { "id": "urinal-integral-gt1gpf", "fixture": "Urinal, integral trap, greater than 1.0 GPF", "trap": "2", "private": 2.0, "public": 2.0, "assembly": 6.0, "verified": null },
+    { "id": "urinal-exposed-trap", "fixture": "Urinal, exposed trap", "trap": "1-1/2", "private": 2.0, "public": 2.0, "assembly": 5.0, "verified": null },
+    { "id": "wash-fountain", "fixture": "Wash fountain, circular spray", "trap": "2", "private": null, "public": 3.0, "assembly": 3.0, "verified": null },
+    { "id": "wc-1.6-gravity", "fixture": "Water closet, 1.6 GPF gravity tank", "trap": "3", "private": 3.0, "public": 4.0, "assembly": 6.0, "verified": null },
+    { "id": "wc-1.6-flushometer-tank", "fixture": "Water closet, 1.6 GPF flushometer tank", "trap": "3", "private": 3.0, "public": 4.0, "assembly": 6.0, "verified": null },
+    { "id": "wc-1.6-valve", "fixture": "Water closet, 1.6 GPF flushometer valve", "trap": "3", "private": 3.0, "public": 4.0, "assembly": 6.0, "verified": null },
+    { "id": "wc-gt1.6-gravity", "fixture": "Water closet, greater than 1.6 GPF gravity tank", "trap": "3", "private": 4.0, "public": 6.0, "assembly": 8.0, "verified": null },
+    { "id": "wc-gt1.6-valve", "fixture": "Water closet, greater than 1.6 GPF flushometer valve", "trap": "3", "private": 4.0, "public": 6.0, "assembly": 8.0, "verified": null }
+  ]
+}

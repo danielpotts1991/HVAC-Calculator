@@ -1,0 +1,35 @@
+{
+  "meta": {
+    "id": "ashrae-62.1-2022-t6-1",
+    "standard": "ASHRAE 62.1",
+    "edition": "2022",
+    "table": "Table 6-1",
+    "title": "Minimum Ventilation Rates in Breathing Zone",
+    "units": { "rp": "cfm/person", "ra": "cfm/ft²", "density": "people per 1000 ft² (default occupant density)" },
+    "notes": [
+      "Values typed from memory, not from a copy of the standard. Check each row against your copy and fill in \"verified\".",
+      "These rates have been stable since the 2016 edition; confirm against the edition your jurisdiction adopts."
+    ]
+  },
+  "rows": [
+    { "id": "office-space", "space": "Office space", "category": "Office buildings", "rp": 5, "ra": 0.06, "density": 5, "verified": null },
+    { "id": "conference-meeting", "space": "Conference/meeting", "category": "General", "rp": 5, "ra": 0.06, "density": 50, "verified": null },
+    { "id": "reception-areas", "space": "Reception areas", "category": "Office buildings", "rp": 5, "ra": 0.06, "density": 30, "verified": null },
+    { "id": "main-entry-lobbies", "space": "Main entry lobbies", "category": "Office buildings", "rp": 5, "ra": 0.06, "density": 10, "verified": null },
+    { "id": "breakrooms", "space": "Breakrooms", "category": "General", "rp": 5, "ra": 0.06, "density": 25, "verified": null },
+    { "id": "corridors", "space": "Corridors", "category": "General", "rp": 0, "ra": 0.06, "density": 0, "verified": null },
+    { "id": "storage-rooms", "space": "Storage rooms", "category": "General", "rp": 0, "ra": 0.12, "density": 0, "verified": null },
+    { "id": "electrical-rooms", "space": "Electrical equipment rooms", "category": "Miscellaneous spaces", "rp": 0, "ra": 0.06, "density": 0, "verified": null },
+    { "id": "telephone-closets", "space": "Telephone closets", "category": "Miscellaneous spaces", "rp": 0, "ra": 0, "density": 0, "verified": null },
+    { "id": "classrooms-9plus", "space": "Classrooms (age 9 plus)", "category": "Educational facilities", "rp": 10, "ra": 0.12, "density": 35, "verified": null },
+    { "id": "classrooms-5-8", "space": "Classrooms (ages 5–8)", "category": "Educational facilities", "rp": 10, "ra": 0.12, "density": 25, "verified": null },
+    { "id": "lecture-classroom", "space": "Lecture classroom", "category": "Educational facilities", "rp": 7.5, "ra": 0.06, "density": 65, "verified": null },
+    { "id": "science-labs-edu", "space": "Science laboratories", "category": "Educational facilities", "rp": 10, "ra": 0.18, "density": 25, "verified": null },
+    { "id": "computer-lab", "space": "Computer lab", "category": "Educational facilities", "rp": 10, "ra": 0.12, "density": 25, "verified": null },
+    { "id": "restaurant-dining", "space": "Restaurant dining rooms", "category": "Food and beverage service", "rp": 7.5, "ra": 0.18, "density": 70, "verified": null },
+    { "id": "cafeteria-dining", "space": "Cafeteria/fast-food dining", "category": "Food and beverage service", "rp": 7.5, "ra": 0.18, "density": 100, "verified": null },
+    { "id": "kitchen-cooking", "space": "Kitchen (cooking)", "category": "Food and beverage service", "rp": 7.5, "ra": 0.12, "density": 20, "verified": null },
+    { "id": "sales-retail", "space": "Sales (except as below)", "category": "Retail", "rp": 7.5, "ra": 0.12, "density": 15, "verified": null },
+    { "id": "hotel-bedroom", "space": "Bedroom/living room", "category": "Hotels, motels, resorts, dormitories", "rp": 5, "ra": 0.06, "density": 10, "verified": null }
+  ]
+}

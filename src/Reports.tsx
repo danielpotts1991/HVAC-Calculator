@@ -1,18 +1,21 @@
 import { useRef, useState } from 'react';
 import { X, Save, SaveAll, Trash2, Upload, Download, Printer, RotateCcw, GripVertical, Plus, FileJson, FilePlus, Pencil } from 'lucide-react';
-import { type Room, type ReportTemplate, BUILTIN_REPORTS, COLUMNS, COLUMN_BY_ID, metrics, formatCell, newId } from './rooms';
+import { type Room, type Env, type ReportTemplate, BUILTIN_REPORTS, COLUMNS, COLUMN_BY_ID, metrics, formatCell, newId, fmtFu } from './rooms';
+import { SCHEDULE_REPORT_ID, fixtureSchedule, OCCUPANCIES } from './plumbing';
+import { wsfuTable, dfuTable, sourceLabel } from './reference';
 
 const TEMPLATE_FILE_TYPE = 'hvac-studio-report-template';
 
 type Props = {
   rooms: Room[];
   feetPerPoint: number | null;
-  altitudeFt: number;
+  env: Env;
   projectName: string;
   saved: ReportTemplate[];                       // user report layouts (kept in this browser)
   setSaved: (next: ReportTemplate[]) => void;
   templateName: (id?: string | null) => string;  // room template id -> display name
   onClose: () => void;
+  initialId?: string;                            // report to open on
 };
 
 function download(content: string, name: string, type: string) {
@@ -22,9 +25,10 @@ function download(content: string, name: string, type: string) {
 }
 const safeFile = (s: string) => s.replace(/[\\/:*?"<>|]+/g, '-').trim() || 'report';
 
-export default function Reports({ rooms, feetPerPoint, altitudeFt, projectName, saved, setSaved, templateName, onClose }: Props) {
+export default function Reports({ rooms, feetPerPoint, env, projectName, saved, setSaved, templateName, onClose, initialId }: Props) {
   const all = [...BUILTIN_REPORTS, ...saved];
-  const [currentId, setCurrentId] = useState(all[0].id);
+  const [currentId, setCurrentId] = useState(initialId === SCHEDULE_REPORT_ID || all.some(t => t.id === initialId) ? initialId! : all[0].id);
+  const schedule = currentId === SCHEDULE_REPORT_ID; // per fixture type, not per room
   const current = all.find(t => t.id === currentId) ?? all[0];
   const [cols, setCols] = useState<string[]>(current.columns);
   const [note, setNote] = useState('');
@@ -34,7 +38,7 @@ export default function Reports({ rooms, feetPerPoint, altitudeFt, projectName, 
   const dirty = cols.join() !== current.columns.join();
 
   const columns = cols.map(id => COLUMN_BY_ID.get(id)).filter(c => !!c);
-  const rows = rooms.map(r => ({ r, m: metrics(r, feetPerPoint, altitudeFt) }));
+  const rows = rooms.map(r => ({ r, m: metrics(r, feetPerPoint, env) }));
   const ctx = { tpl: templateName };
   const totals = columns.map(c => c.sum ? rows.reduce<number | null>((t, { r, m }) => {
     const v = c.get(r, m, ctx); return typeof v === 'number' ? (t ?? 0) + v : t;
@@ -42,7 +46,7 @@ export default function Reports({ rooms, feetPerPoint, altitudeFt, projectName, 
 
   function choose(id: string) {
     if (dirty && !window.confirm('Discard your unsaved column changes?')) return;
-    const t = all.find(x => x.id === id)!;
+    const t = all.find(x => x.id === id) ?? all[0];
     setCurrentId(id); setCols(t.columns); setNote('');
   }
   function saveAs() {
@@ -94,7 +98,18 @@ export default function Reports({ rooms, feetPerPoint, altitudeFt, projectName, 
       setNote(`Imported "${name}".${skipped ? ` ${skipped} unknown column(s) were skipped.` : ''}`);
     } catch { setNote('That file is not an HVAC Studio report template.'); }
   }
+  // Plumbing fixture schedule
+  const sched = fixtureSchedule(rooms.flatMap(r => r.fixtures ?? []), env.fixtureTypes ?? []);
+  const sTot = sched.reduce((a, x) => ({ count: a.count + x.count, cold: a.cold + x.totCold, hot: a.hot + x.totHot, dfu: a.dfu + x.totDfu, wsfu: a.wsfu + x.totWsfu }), { count: 0, cold: 0, hot: 0, dfu: 0, wsfu: 0 });
+  const occ = (o: string) => OCCUPANCIES.find(x => x[0] === o)?.[1] ?? o;
+  const SCHED_HEAD = ['Tag', 'Fixture', 'Occupancy', 'Qty', 'Cold WSFU (each)', 'Hot WSFU (each)', 'Waste DFU (each)', 'Total Cold WSFU', 'Total Hot WSFU', 'Total Waste DFU'];
   function exportCsv() {
+    if (schedule) {
+      const r2 = (v: number) => Number(v.toFixed(2));
+      const lines: (string | number)[][] = [SCHED_HEAD, ...sched.map(x => [x.t.tag, x.t.name, occ(x.t.occ), x.count, r2(x.cold), r2(x.hot), r2(x.dfu), r2(x.totCold), r2(x.totHot), r2(x.totDfu)]),
+        ['Total', '', '', sTot.count, '', '', '', r2(sTot.cold), r2(sTot.hot), r2(sTot.dfu)], ['Combined total WSFU (sum of each fixture total)', '', '', '', '', '', '', r2(sTot.wsfu), '', '']];
+      download(lines.map(l => l.map(v => `"${String(v).replaceAll('"', '""')}"`).join(',')).join('\r\n'), 'Plumbing Fixture Schedule.csv', 'text/csv'); return;
+    }
     const raw = (v: number | string | null, dec = 1) => v === null ? '' : typeof v === 'number' ? Number(v.toFixed(dec)) : v;
     const lines: (string | number)[][] = [columns.map(c => c.label), ...rows.map(({ r, m }) => columns.map(c => raw(c.get(r, m, ctx), c.dec ?? 1)))];
     if (rows.length && totals.some(t => t !== null)) lines.push(columns.map((c, i) => i === 0 && !c.sum ? 'Total' : raw(totals[i], c.dec ?? 1)));
@@ -111,11 +126,13 @@ export default function Reports({ rooms, feetPerPoint, altitudeFt, projectName, 
     <div className="hvac-reports-bar">
       <strong>Reports</strong>
       <select value={currentId} onChange={e => choose(e.target.value)} aria-label="Report">
-        <optgroup label="Standard">{BUILTIN_REPORTS.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}</optgroup>
+        <optgroup label="Standard">{BUILTIN_REPORTS.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+          <option value={SCHEDULE_REPORT_ID}>Plumbing Fixture Schedule</option></optgroup>
         {saved.length > 0 && <optgroup label="My reports">{saved.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}</optgroup>}
       </select>
-      {dirty && <span className="hvac-dirty">Unsaved layout</span>}
+      {dirty && !schedule && <span className="hvac-dirty">Unsaved layout</span>}
       <div className="hvac-reports-actions">
+        {!schedule && <>
         <button className="hvac-btn" title="Start a new report from scratch" onClick={newReport}><FilePlus size={15} /> New</button>
         <button className="hvac-btn" title={current.builtin ? 'Standard reports keep their name: saves a renamed copy' : 'Rename this report'} onClick={rename}><Pencil size={15} /> Rename</button>
         <button className="hvac-btn" title={current.builtin ? 'Standard reports are read-only: saves a copy' : 'Save layout'} onClick={save} disabled={!dirty && !current.builtin}><Save size={15} /> Save</button>
@@ -126,12 +143,13 @@ export default function Reports({ rooms, feetPerPoint, altitudeFt, projectName, 
         <input ref={importRef} type="file" accept=".json,application/json" hidden onChange={e => { const f = e.target.files?.[0]; if (f) void importTemplate(f); e.target.value = ''; }} />
         <button className="hvac-btn" title="Import a report template file" onClick={() => importRef.current?.click()}><Upload size={15} /> Import template</button>
         <button className="hvac-btn" title="Save this column layout as a file to use on other computers" onClick={exportTemplate}><FileJson size={15} /> Export template</button>
-        <span className="hvac-sep" />
-        <button className="hvac-btn" onClick={exportCsv} disabled={!rooms.length}><Download size={15} /> CSV</button>
+        <span className="hvac-sep" /></>}
+        <button className="hvac-btn" onClick={exportCsv} disabled={schedule ? !sched.length : !rooms.length}><Download size={15} /> CSV</button>
         <button className="hvac-btn" onClick={() => window.print()} disabled={!rooms.length}><Printer size={15} /> Print</button>
         <button className="hvac-btn icon-only" title="Close reports (Esc)" onClick={onClose}><X size={17} /></button>
       </div>
     </div>
+    {schedule ? <div className="hvac-columns"><span className="hvac-muted">One row per fixture in the project list (Libraries → Plumbing fixtures). Counts come from fixtures placed on the plan.</span></div> :
     <div className="hvac-columns">
       <span className="hvac-muted">Columns — drag to reorder:</span>
       {cols.map((id, i) => {
@@ -155,10 +173,32 @@ export default function Reports({ rooms, feetPerPoint, altitudeFt, projectName, 
           {groups.map(g => <optgroup key={g} label={g}>{unused.filter(c => c.group === g).map(c => <option key={c.id} value={c.id}>{c.label}</option>)}</optgroup>)}
         </select>
       </span>
-    </div>
+    </div>}
     {note && <div className="hvac-note hvac-reports-note">{note}</div>}
     <div className="hvac-reports-body">
       <div className="hvac-report-sheet">
+        {schedule ? <>
+        <div className="hvac-report-title">
+          <div><h2>Plumbing Fixture Schedule</h2><span>{projectName.replace(/\.hvac\.json$|\.json$/, '')}</span></div>
+          <span>{new Date().toLocaleDateString()}</span>
+        </div>
+        {!sched.length ? <p className="hvac-muted">No fixtures in the project list yet. Pick them in Libraries → Plumbing fixtures.</p> :
+          <table className="hvac-report-table hvac-schedule">
+            <thead>
+              <tr><th className="txt" rowSpan={2}>Tag</th><th className="txt" rowSpan={2}>Fixture</th><th className="txt" rowSpan={2}>Occupancy</th><th rowSpan={2}>Qty</th>
+                <th colSpan={3} className="grp">Each fixture</th><th colSpan={3} className="grp">Total</th></tr>
+              <tr><th>Cold WSFU</th><th>Hot WSFU</th><th>Waste DFU</th><th>Cold WSFU</th><th>Hot WSFU</th><th>Waste DFU</th></tr>
+            </thead>
+            <tbody>{sched.map(x => <tr key={x.t.id} className={x.count ? undefined : 'zero'}>
+              <td className="txt"><strong>{x.t.tag}</strong></td><td className="txt">{x.t.name}</td><td className="txt">{occ(x.t.occ)}</td><td>{x.count}</td>
+              <td>{fmtFu(x.cold)}</td><td>{fmtFu(x.hot)}</td><td>{fmtFu(x.dfu)}</td>
+              <td className="sep">{fmtFu(x.totCold)}</td><td>{fmtFu(x.totHot)}</td><td>{fmtFu(x.totDfu)}</td></tr>)}</tbody>
+            <tfoot><tr><td className="txt">Total</td><td /><td /><td>{sTot.count}</td><td /><td /><td />
+              <td className="sep">{fmtFu(sTot.cold)}</td><td>{fmtFu(sTot.hot)}</td><td>{fmtFu(sTot.dfu)}</td></tr></tfoot>
+          </table>}
+        <p className="hvac-report-legend" style={{ display: 'block', maxWidth: 900 }}>Combined supply load: <strong>{fmtFu(sTot.wsfu)} WSFU</strong> (sum of each fixture's total WSFU). Cold and hot are each ¾ of the total for fixtures with both supplies (Table 610.3 footnote), so cold + hot is more than the combined total.
+          Sources: {sourceLabel(wsfuTable.meta)}; {sourceLabel(dfuTable.meta)}.</p>
+        </> : <>
         <div className="hvac-report-title">
           <div><h2>{current.name} Report</h2><span>{projectName.replace(/\.hvac\.json$|\.json$/, '')}</span></div>
           <span>{new Date().toLocaleDateString()}{feetPerPoint === null ? ' · drawing not scaled: areas unavailable' : ''}</span>
@@ -173,6 +213,7 @@ export default function Reports({ rooms, feetPerPoint, altitudeFt, projectName, 
             {totals.some(t => t !== null) && <tfoot><tr>{columns.map((c, i) => <td key={c.id} className={i === 0 && !c.sum ? 'txt' : ''}>{i === 0 && !c.sum ? 'Total' : totals[i] === null ? '' : formatCell(totals[i], c.dec ?? 1)}</td>)}</tr></tfoot>}
           </table>}
         <p className="hvac-report-legend"><span className="bad-swatch" /> Red values are below the room's requirement (outdoor air or exhaust) or don't match the pressure target.</p>
+        </>}
       </div>
     </div>
   </div>;

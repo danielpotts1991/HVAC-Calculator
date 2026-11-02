@@ -1,0 +1,40 @@
+{
+  "meta": {
+    "id": "plumbing-catalog-upc-2021-wa",
+    "standard": "UPC (Washington, WAC 51-56)",
+    "edition": "2021",
+    "table": "Fixture catalog",
+    "title": "Fixtures you can pick for a project, joined to Table 610.3 (WSFU) and Table 702.1 (DFU)",
+    "notes": [
+      "This file only links fixtures to table rows and picks a plan symbol and default size; the unit values live in the two table files.",
+      "wsfu / dfu are row ids in upc-2021-wa_table-610-3.json and upc-2021-wa_table-702-1.json (null = not in that table).",
+      "size is the plan symbol size in feet (w = width along the wall, h = depth)."
+    ]
+  },
+  "rows": [
+    { "id": "wc-1.6-valve", "name": "Water closet, flushometer valve (1.6 GPF)", "prefix": "WC", "wsfu": "wc-1.6-valve", "dfu": "wc-1.6-valve", "symbol": "wc", "size": { "w": 1.75, "h": 2.33 } },
+    { "id": "wc-1.6-tank", "name": "Water closet, gravity tank (1.6 GPF)", "prefix": "WC", "wsfu": "wc-1.6-gravity", "dfu": "wc-1.6-gravity", "symbol": "wc-tank", "size": { "w": 1.75, "h": 2.5 } },
+    { "id": "wc-1.6-flushometer-tank", "name": "Water closet, flushometer tank (1.6 GPF)", "prefix": "WC", "wsfu": "wc-1.6-flushometer-tank", "dfu": "wc-1.6-flushometer-tank", "symbol": "wc-tank", "size": { "w": 1.75, "h": 2.5 } },
+    { "id": "urinal-valve", "name": "Urinal, flushometer valve (1.0 GPF)", "prefix": "UR", "wsfu": "urinal-1gpf-valve", "dfu": "urinal-integral-1gpf", "symbol": "urinal", "size": { "w": 1.5, "h": 1.25 } },
+    { "id": "urinal-tank", "name": "Urinal, flush tank", "prefix": "UR", "wsfu": "urinal-tank", "dfu": "urinal-exposed-trap", "symbol": "urinal", "size": { "w": 1.5, "h": 1.25 } },
+    { "id": "lavatory", "name": "Lavatory", "prefix": "LAV", "wsfu": "lavatory", "dfu": "lavatory", "symbol": "lav", "size": { "w": 1.75, "h": 1.5 } },
+    { "id": "kitchen-sink", "name": "Kitchen sink, single compartment", "prefix": "SK", "wsfu": "kitchen-sink-domestic", "dfu": "kitchen-sink-domestic", "symbol": "sink", "size": { "w": 2.0, "h": 1.75 } },
+    { "id": "kitchen-sink-double", "name": "Kitchen sink, double compartment", "prefix": "SK", "wsfu": "kitchen-sink-domestic", "dfu": "kitchen-sink-domestic", "symbol": "sink2", "size": { "w": 2.75, "h": 1.75 } },
+    { "id": "bar-sink", "name": "Bar sink", "prefix": "SK", "wsfu": "bar-sink", "dfu": "bar-sink", "symbol": "sink", "size": { "w": 1.5, "h": 1.5 } },
+    { "id": "laundry-sink", "name": "Laundry sink", "prefix": "SK", "wsfu": "laundry-sink", "dfu": "laundry-sink", "symbol": "sink", "size": { "w": 2.0, "h": 1.75 } },
+    { "id": "clinical-sink", "name": "Clinical sink", "prefix": "SK", "wsfu": "clinical-sink", "dfu": "clinical-sink", "symbol": "sink", "size": { "w": 2.0, "h": 2.0 } },
+    { "id": "washup-sink", "name": "Washup sink (per set of faucets)", "prefix": "SK", "wsfu": "washup-sink", "dfu": "washup-sink", "symbol": "sink2", "size": { "w": 3.0, "h": 1.75 } },
+    { "id": "mop-sink", "name": "Service sink / mop basin", "prefix": "MS", "wsfu": "service-sink", "dfu": "service-sink", "symbol": "mop", "size": { "w": 2.0, "h": 2.0 } },
+    { "id": "floor-drain", "name": "Floor drain", "prefix": "FD", "wsfu": null, "dfu": "floor-drain", "symbol": "floordrain", "size": { "w": 0.75, "h": 0.75 } },
+    { "id": "floor-drain-emergency", "name": "Floor drain, emergency", "prefix": "FD", "wsfu": null, "dfu": "floor-drain-emergency", "symbol": "floordrain", "size": { "w": 0.75, "h": 0.75 } },
+    { "id": "floor-sink", "name": "Floor sink", "prefix": "FS", "wsfu": null, "dfu": "floor-sink", "symbol": "floorsink", "size": { "w": 1.0, "h": 1.0 } },
+    { "id": "shower", "name": "Shower (per head)", "prefix": "SH", "wsfu": "shower", "dfu": "shower", "symbol": "shower", "size": { "w": 3.0, "h": 3.0 } },
+    { "id": "bathtub", "name": "Bathtub / tub-shower", "prefix": "BT", "wsfu": "bathtub", "dfu": "bathtub", "symbol": "tub", "size": { "w": 5.0, "h": 2.5 } },
+    { "id": "drinking-fountain", "name": "Drinking fountain / water cooler", "prefix": "DF", "wsfu": "drinking-fountain", "dfu": "drinking-fountain", "symbol": "fountain", "size": { "w": 1.5, "h": 1.5 } },
+    { "id": "hose-bibb", "name": "Hose bibb", "prefix": "HB", "wsfu": "hose-bibb", "dfu": null, "symbol": "hosebibb", "size": { "w": 0.75, "h": 0.75 } },
+    { "id": "clothes-washer", "name": "Clothes washer", "prefix": "CW", "wsfu": "clothes-washer", "dfu": "clothes-washer", "symbol": "washer", "size": { "w": 2.25, "h": 2.25 } },
+    { "id": "dishwasher", "name": "Dishwasher, domestic", "prefix": "DW", "wsfu": "dishwasher-domestic", "dfu": "dishwasher-domestic", "symbol": "dishwasher", "size": { "w": 2.0, "h": 2.0 } },
+    { "id": "bidet", "name": "Bidet", "prefix": "BD", "wsfu": "bidet", "dfu": "bidet", "symbol": "bidet", "size": { "w": 1.25, "h": 2.0 } },
+    { "id": "wash-fountain", "name": "Wash fountain, circular", "prefix": "WF", "wsfu": "wash-fountain", "dfu": "wash-fountain", "symbol": "washfountain", "size": { "w": 3.0, "h": 3.0 } }
+  ]
+}

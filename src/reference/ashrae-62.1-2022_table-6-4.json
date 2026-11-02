@@ -1,0 +1,20 @@
+{
+  "meta": {
+    "id": "ashrae-62.1-2022-t6-4",
+    "standard": "ASHRAE 62.1",
+    "edition": "2022",
+    "table": "Table 6-4",
+    "title": "Minimum Exhaust Rates",
+    "units": { "value": "per the unit field" },
+    "notes": [
+      "Values typed from memory, not from a copy of the standard. Check each row against your copy.",
+      "Public toilets: the table gives 50/70 cfm per water closet or urinal; the higher rate applies where periods of heavy use are expected."
+    ]
+  },
+  "rows": [
+    { "id": "toilets-public", "space": "Toilets – public", "value": 70, "unit": "cfm/fixture", "verified": null },
+    { "id": "toilets-private", "space": "Toilets – private", "value": 25, "unit": "cfm/fixture", "verified": null },
+    { "id": "janitor-trash", "space": "Janitor closets, trash rooms, recycling", "value": 1.0, "unit": "cfm/SF", "verified": null },
+    { "id": "science-labs-edu", "space": "Educational science laboratories", "value": 1.0, "unit": "cfm/SF", "verified": null }
+  ]
+}

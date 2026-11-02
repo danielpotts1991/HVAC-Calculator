@@ -1,0 +1,28 @@
+{
+  "meta": {
+    "id": "room-templates",
+    "standard": "HVAC Studio room templates",
+    "edition": "1",
+    "table": "Starting points",
+    "title": "Built-in room templates",
+    "notes": [
+      "Each template points at an ASHRAE 62.1 Table 6-1 row (ventilation) and optionally a Table 6-4 row (exhaust); the rates come from those files.",
+      "Lighting and equipment W/SF are typical design allowances, NOT code values. Edit freely.",
+      "The science lab exhaust of 6 ACH is a common design practice; Table 6-4 lists 1.0 cfm/SF for educational science labs."
+    ]
+  },
+  "rows": [
+    { "id": "office", "name": "Office", "vent": "office-space", "lightingWsf": 0.65, "equipmentWsf": 1.0 },
+    { "id": "conference", "name": "Conference / Meeting", "vent": "conference-meeting", "lightingWsf": 0.95, "equipmentWsf": 0.5 },
+    { "id": "reception", "name": "Reception", "vent": "reception-areas", "lightingWsf": 0.8, "equipmentWsf": 0.5 },
+    { "id": "lobby", "name": "Main Entry Lobby", "vent": "main-entry-lobbies", "lightingWsf": 0.8, "equipmentWsf": 0.25 },
+    { "id": "break", "name": "Break Room", "vent": "breakrooms", "lightingWsf": 0.6, "equipmentWsf": 2.0 },
+    { "id": "corridor", "name": "Corridor", "vent": "corridors", "lightingWsf": 0.4, "equipmentWsf": 0 },
+    { "id": "storage", "name": "Storage", "vent": "storage-rooms", "lightingWsf": 0.4, "equipmentWsf": 0 },
+    { "id": "electrical", "name": "Electrical / Telecom", "vent": "electrical-rooms", "lightingWsf": 0.4, "equipmentWsf": 0 },
+    { "id": "classroom", "name": "Classroom (age 9+)", "vent": "classrooms-9plus", "lightingWsf": 0.7, "equipmentWsf": 0.5 },
+    { "id": "lab", "name": "Science Lab (education)", "vent": "science-labs-edu", "lightingWsf": 1.0, "equipmentWsf": 5.0, "exhaustDesign": { "value": 6, "unit": "ACH" } },
+    { "id": "toilet", "name": "Toilet Room (public)", "vent": null, "lightingWsf": 0.65, "equipmentWsf": 0, "exhaust": "toilets-public" },
+    { "id": "janitor", "name": "Janitor / Trash", "vent": null, "lightingWsf": 0.5, "equipmentWsf": 0, "exhaust": "janitor-trash" }
+  ]
+}
