@@ -1,5 +1,5 @@
 // ASHRAE 62.1 outdoor air and internal heat gains (Loads) sections of the HVAC module.
-import { Plus, Trash2, Package } from 'lucide-react';
+import { Plus, Trash2, Package, Wind } from 'lucide-react';
 import { type OccUnit, type LoadUnit, OCC_UNITS, LOAD_UNITS, OA_DIFFUSER, BTUH_PER_W, fmt, newId, ashraeMatches, loadsMatch, itemHeatW } from '../rooms';
 import { NumField, Section } from '../ui';
 import type { ModuleCtx } from './types';
@@ -26,8 +26,13 @@ export function VentilationSections(ctx: ModuleCtx) {
         <button className="hvac-linkbtn" onClick={()=>addEquipTo(selected,OA_DIFFUSER)}>Add an OA diffuser for {fmt(roundUp5(m.voz!-m.oa))} cfm</button></div>}
       {!selected.equipment.length&&<p className="hvac-muted">Outdoor air comes from the room's equipment: each unit's airflow × its % OA, plus OA diffusers.</p>}
     </Section>
-    <Section title="Loads" open={secOpen('loads')} onToggle={()=>toggleSec('loads')} aside={totalW===null?undefined:`${fmt(totalW*BTUH_PER_W)} BTU/h`}>
+    <Section title="Loads" open={secOpen('loads')} onToggle={()=>toggleSec('loads')} aside={m.coolingLoad===null?undefined:`${fmt(m.coolingLoad)} BTU/h`}>
       {tag(!!tpl&&loadsMatch(selected,tpl))}
+      <div className="hvac-grid2 hvac-setpoints">
+        <div className="hvac-field"><label>Cooling setpoint (°F)</label><NumField value={selected.coolSetpoint} onChange={v=>updateRoom({coolSetpoint:v})}/></div>
+        <div className="hvac-field"><label>Heating setpoint (°F)</label><NumField value={selected.heatSetpoint} onChange={v=>updateRoom({heatSetpoint:v})}/></div>
+      </div>
+      <div className="hvac-subhead">Internal loads</div>
       {selected.loads.map((l,k)=>l.libId?(()=>{const it=env.library.find(i=>i.id===l.libId);
         return <div className="hvac-load hvac-load-lib" key={l.id}>
           <div className="hvac-inline"><Package size={13} className="hvac-lib-icon"/>
@@ -54,11 +59,35 @@ export function VentilationSections(ctx: ModuleCtx) {
             <option value="__open">Open Equipment Library…</option></select>
           :<button className="hvac-btn" title="Build custom equipment from its parts" onClick={()=>openLibrary()}><Package size={14}/> Equipment library</button>}
       </div>
-      <div className="hvac-row"><span>Internal loads</span><strong>{totalW===null?'Calibrate first':`${fmt(totalW)} W · ${btu(totalW*BTUH_PER_W)}`}</strong></div>
+      <div className="hvac-row"><span>Internal loads</span><strong>{totalW===null?'Calibrate first':`${fmt(totalW)} W`}</strong></div>
       <div className="hvac-row"><span>Load density</span><strong>{totalW===null||!net?'—':`${fmt(totalW/net)} W/SF`}</strong></div>
-      <div className="hvac-row"><span>People ({occ===null?'—':fmt(occ)} × {fmt(env.peopleSensible)} BTU/h)</span><strong>{btu(m.peopleBtuh)}</strong></div>
-      <div className="hvac-muted hvac-load-eq" style={{marginTop:-4}}>Heat per person is a project setting. <button className="hvac-linkbtn" style={{padding:0,fontSize:11}} onClick={()=>openSettings('set-project')}>Change</button></div>
-      <div className="hvac-row hvac-result"><span>Sensible cooling load</span><strong>{btu(m.coolingLoad)}</strong></div>
+      <div className="hvac-subhead">Envelope / conduction</div>
+      <div className="hvac-field"><div className="hvac-inline">
+        <NumField value={selected.envelope.value} onChange={v=>updateRoom({envelope:{...selected.envelope,value:v}})}/>
+        <select aria-label="Envelope load unit" value={selected.envelope.unit} onChange={e=>updateRoom({envelope:{...selected.envelope,unit:e.target.value as LoadUnit}})}>{LOAD_UNITS.map(u=><option key={u} value={u}>{u}</option>)}</select></div>
+        <div className="hvac-muted hvac-load-eq">{selected.envelope.unit!=='BTU/h'&&m.envelopeBtuh!==null?`= ${btu(m.envelopeBtuh)} · `:''}Walls, roof, floor, glass: your own calculation at the {fmt(selected.coolSetpoint)} °F setpoint.</div></div>
+      <div className="hvac-subhead">Air streams</div>
+      {selected.airLoads.map((a,k)=>{const q=m.airLoadBtuh[k]??0,set=(ch:Partial<typeof a>)=>updateRoom({airLoads:selected.airLoads.map((x,j)=>j===k?{...x,...ch}:x)});
+        return <div className="hvac-load hvac-air-load" key={a.id}>
+          <input className="hvac-load-name" value={a.name} aria-label="Air stream name" onChange={e=>set({name:e.target.value})}/>
+          <div className="hvac-inline">
+            <NumField value={a.cfm} onChange={v=>set({cfm:v})}/><span className="hvac-muted">cfm at</span>
+            <NumField value={a.temp} onChange={v=>set({temp:v})}/><span className="hvac-muted">°F</span>
+            <button className="hvac-btn icon-only" title="Remove air stream" onClick={()=>updateRoom({airLoads:selected.airLoads.filter((_,j)=>j!==k)})}><Trash2 size={13}/></button>
+          </div>
+          <div className={`hvac-muted hvac-load-eq${q>0.5?' hvac-air-adds':''}`}>{m.factor.toFixed(2)} × {fmt(a.cfm)} cfm × ({fmt(a.temp)} − {fmt(selected.coolSetpoint)} °F) = <strong>{q>=0?'+':'−'}{btu(Math.abs(q))}</strong> {Math.abs(q)<0.5?'':q>0?'(adds heat)':'(removes heat)'}</div>
+        </div>;})}
+      <div className="hvac-load-add">
+        <button className="hvac-btn" title="Humidifier, infiltration, transfer air: air entering the room at its own temperature" onClick={()=>updateRoom({airLoads:[...selected.airLoads,{id:newId(),name:'Humidifier',cfm:0,temp:selected.coolSetpoint}]})}><Wind size={14}/> Add air stream</button>
+      </div>
+      <div className="hvac-load-total">
+        <div className="hvac-row"><span>Internal loads</span><strong>{totalW===null?'—':btu(totalW*BTUH_PER_W)}</strong></div>
+        <div className="hvac-row"><span>People ({occ===null?'—':fmt(occ)} × {fmt(env.peopleSensible)} BTU/h)</span><strong>{btu(m.peopleBtuh)}</strong></div>
+        <div className="hvac-row"><span>Envelope / conduction</span><strong>{btu(m.envelopeBtuh)}</strong></div>
+        <div className="hvac-row"><span>Air streams</span><strong>{m.airBtuh<-0.5?'−':''}{btu(Math.abs(m.airBtuh))}</strong></div>
+        <div className="hvac-row hvac-result"><span>Sensible cooling load at {fmt(selected.coolSetpoint)} °F</span><strong>{btu(m.coolingLoad)}</strong></div>
+      </div>
+      <div className="hvac-muted hvac-load-eq">Heat per person is a project setting. <button className="hvac-linkbtn" style={{padding:0,fontSize:11}} onClick={()=>openSettings('set-project')}>Change</button></div>
     </Section>
   </>;
 }

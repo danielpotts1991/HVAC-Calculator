@@ -19,6 +19,9 @@ export type PressureUnit = 'inwg' | 'Pa';
 export const PA_PER_INWG = 249.0889;
 // A room load line: either a typed value (W, W/SF, ...) or `qty` of an Equipment Library item (libId).
 export type Load = { id: string; name: string; value: number; unit: LoadUnit; libId?: string; qty?: number };
+// Air entering the room from something other than its HVAC equipment (humidifier, infiltration, transfer air...).
+// Sensible load = 1.08 (altitude-corrected) × cfm × (air temp − cooling setpoint): warmer air adds load, colder air removes it.
+export type AirLoad = { id: string; name: string; cfm: number; temp: number };
 
 // ---- Equipment Library: custom equipment built from parts (monitors, motors, power supplies...) ----
 // Each part's input power comes from watts, volts x amps, or motor HP; heatPct is the share that ends up as heat in the room.
@@ -101,6 +104,8 @@ export type Room = {
   exhaustReq: { value: number; unit: ExhUnit; fixtures: number };
   // Heating & cooling
   coolSetpoint: number; heatSetpoint: number;   // °F
+  envelope: { value: number; unit: LoadUnit };  // conduction / envelope gain, entered by hand
+  airLoads: AirLoad[];                          // air streams that add (or remove) sensible heat
   heatingLoad: { value: number; unit: LoadUnit };
   equipment: Equip[];
   labelPos?: Point | null; labelSize?: number;  // label position/size in PDF points (null = automatic position)
@@ -184,6 +189,8 @@ export function normalizeRoom(raw: any): Room {
     exhaustReq: { value: num(raw.exhaustReq?.value), unit: raw.exhaustReq?.unit ?? 'cfm', fixtures: num(raw.exhaustReq?.fixtures, 1) },
     coolSetpoint: num(raw.coolSetpoint, 75), heatSetpoint: num(raw.heatSetpoint, 70),
     heatingLoad: raw.heatingLoad ?? { value: 0, unit: 'BTU/h' },
+    envelope: raw.envelope ?? { value: 0, unit: 'BTU/h' },
+    airLoads: Array.isArray(raw.airLoads) ? raw.airLoads.map((a: Partial<AirLoad>) => ({ id: a.id ?? newId(), name: a.name ?? 'Air stream', cfm: num(a.cfm), temp: num(a.temp, 55) })) : [],
     equipment: Array.isArray(raw.equipment) ? raw.equipment.map(normalizeEquip) : [],
     labelPos: raw.labelPos ?? null, labelSize: num(raw.labelSize, DEFAULT_LABEL_SIZE),
     fixtures: normalizeFixtures(raw.fixtures),
@@ -204,6 +211,7 @@ export type Metrics = {
   supply: number; oa: number; achSupply: number | null; oaShort: boolean;
   // Heating & cooling (BTU/h)
   factor: number; coolingLoad: number | null; peopleBtuh: number | null; heatingLoad: number | null;
+  envelopeBtuh: number | null; airLoadBtuh: number[]; airBtuh: number; // entered envelope gain, air-stream loads (± BTU/h)
   equip: EquipResult[]; coolCap: number; heatCap: number; coilTotal: number; equipCoolCfm: number;
   coolingShort: boolean; heatingShort: boolean;
   cfmNeeded: number | null; designLat: number;  // cooling cfm needed at designLat to meet the load
@@ -222,10 +230,12 @@ export function metrics(r: Room, feetPerPoint: number | null, env: Env = DEFAULT
   const byCat = (c: LoadCategory) => { const ws = r.loads.map((l, i) => (l.libId ? 'equipment' : loadCategory(l.name)) === c ? loadW[i] : 0); return ws.some(w => w === null) ? null : ws.reduce<number>((t, w) => t + (w ?? 0), 0); };
   const perimeter = feetPerPoint === null ? null : r.points.reduce((t, p, i) => { const q = r.points[(i + 1) % r.points.length]; return t + Math.hypot(q.x - p.x, q.y - p.y); }, 0) * feetPerPoint;
 
-  // Heating & cooling. Cooling = sensible internal loads + people; heating load is entered.
+  // Heating & cooling. Cooling = sensible internal loads + people + envelope (entered) + air streams; heating load is entered.
   const factor = sensibleFactor(env.altitudeFt);
   const peopleBtuh = occupants === null ? null : occupants * env.peopleSensible;
-  const coolingLoad = totalW === null || peopleBtuh === null ? null : totalW * BTUH_PER_W + peopleBtuh;
+  const envW = loadToW(r.envelope?.value ?? 0, r.envelope?.unit ?? 'BTU/h', area), envelopeBtuh = envW === null ? null : envW * BTUH_PER_W;
+  const airLoadBtuh = (r.airLoads ?? []).map(a => factor * a.cfm * (a.temp - r.coolSetpoint)), airBtuh = airLoadBtuh.reduce((t, x) => t + x, 0);
+  const coolingLoad = totalW === null || peopleBtuh === null || envelopeBtuh === null ? null : totalW * BTUH_PER_W + peopleBtuh + envelopeBtuh + airBtuh;
   const hW = loadToW(r.heatingLoad.value, r.heatingLoad.unit, area);
   const heatingLoad = hW === null ? null : hW * BTUH_PER_W;
   const equip = r.equipment.map((e): EquipResult => {
@@ -267,7 +277,7 @@ export function metrics(r: Room, feetPerPoint: number | null, env: Env = DEFAULT
     primaryAir, primaryAirMin, unitAir, oaDiffAir,
     supply, oa, achSupply: volume ? supply * 60 / volume : null,
     oaShort: voz !== null && voz > 0 && oa < voz - 0.05,
-    factor, coolingLoad, peopleBtuh, heatingLoad, equip, coolCap, heatCap, coilTotal, equipCoolCfm,
+    factor, coolingLoad, peopleBtuh, heatingLoad, envelopeBtuh, airLoadBtuh, airBtuh, equip, coolCap, heatCap, coilTotal, equipCoolCfm,
     // Only judged once equipment has been added: an undesigned room isn't flagged.
     coolingShort: r.equipment.length > 0 && coolingLoad !== null && coolingLoad > 0 && coolCap < coolingLoad - 0.5,
     heatingShort: r.equipment.length > 0 && heatingLoad !== null && heatingLoad > 0 && heatCap < heatingLoad - 0.5,
@@ -370,6 +380,9 @@ export const COLUMNS: Column[] = [
   { id: 'loadDensity', label: 'Internal Load (W/SF)', group: 'Loads', get: (_r, m) => perSF(m.totalW, m.area), dec: 2 },
   { id: 'loadBtu', label: 'Internal Load (BTU/h)', group: 'Loads', get: (_r, m) => m.totalW === null ? null : m.totalW * BTUH_PER_W, dec: 0, sum: true },
   { id: 'peopleBtu', label: 'People Load (BTU/h)', group: 'Loads', get: (_r, m) => m.peopleBtuh, dec: 0, sum: true },
+  { id: 'envLoad', label: 'Envelope / Conduction (BTU/h)', group: 'Loads', get: (_r, m) => m.envelopeBtuh, dec: 0, sum: true },
+  { id: 'airLoad', label: 'Air Stream Load (BTU/h)', group: 'Loads', get: (_r, m) => m.airBtuh, dec: 0, sum: true },
+  { id: 'airStreams', label: 'Air Streams', group: 'Loads', get: r => (r.airLoads ?? []).map(a => `${a.name}: ${tidy(a.cfm)} cfm @ ${tidy(a.temp)} °F`).join('; ') || null },
   { id: 'loadBreakdown', label: 'Load Breakdown', group: 'Loads', get: r => r.loads.map(l => l.libId ? `${l.name} ×${tidy(l.qty ?? 1)}` : `${l.name}: ${tidy(l.value)} ${l.unit}`).join('; ') || null },
   // Mechanical equipment
   { id: 'equipment', label: 'Equipment', group: 'Mechanical Equipment', get: r => r.equipment.map(e => e.tag || e.type).join(', ') || null },
@@ -406,7 +419,7 @@ export type ReportTemplate = { id: string; name: string; columns: string[]; buil
 export const BUILTIN_REPORTS: ReportTemplate[] = [
   { id: 'ventilation', name: 'Ventilation', builtin: true, columns: ['name', 'area', 'height', 'volume', 'people', 'rp', 'ra', 'reqOA', 'provOA', 'oaMargin', 'primaryAir', 'achSupply'] },
   { id: 'hvac', name: 'Mechanical Equipment', builtin: true, columns: ['name', 'area', 'equipment', 'primaryAir', 'primaryAirMin', 'unitAir', 'oaDiffAir', 'coolLoad', 'coolCap', 'heatLoad', 'heatCap', 'coil'] },
-  { id: 'loads', name: 'Loads', builtin: true, columns: ['name', 'area', 'lightWSF', 'lightW', 'equipWSF', 'equipW', 'otherW', 'loadW', 'loadDensity', 'peopleBtu', 'coolLoad'] },
+  { id: 'loads', name: 'Loads', builtin: true, columns: ['name', 'area', 'lightWSF', 'lightW', 'equipWSF', 'equipW', 'otherW', 'loadW', 'loadDensity', 'peopleBtu', 'envLoad', 'airLoad', 'coolLoad'] },
   { id: 'plumbing', name: 'Plumbing Fixture Units', builtin: true, columns: ['name', 'area', 'fixtures', 'fixtureCount', 'wsfuCold', 'wsfuHot', 'wsfu', 'dfu'] },
   { id: 'schedule', name: 'Room Schedule', builtin: true, columns: ['name', 'template', 'gross', 'cutouts', 'area', 'perimeter', 'height', 'volume'] },
   { id: 'roomdata', name: 'Room Data Summary', builtin: true, columns: ['name', 'template', 'area', 'volume', 'people', 'reqOA', 'provOA', 'lightWSF', 'equipWSF', 'coolLoad', 'coolCap', 'heatLoad', 'heatCap', 'primaryAir', 'status'] },
