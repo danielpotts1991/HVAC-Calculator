@@ -340,6 +340,7 @@ export type Column = {
   id: string; label: string; group: string;
   get: (r: Room, m: Metrics, ctx: CellCtx) => number | string | null;
   dec?: number; sum?: boolean; flag?: (r: Room, m: Metrics) => boolean;
+  perEquip?: boolean; // depends only on the room's equipment: in reports with one row per unit it's worked out per unit
   edit?: { kind: 'text' | 'number'; set: (v: string | number) => Partial<Room> }; // editable in the room table
 };
 const num = (k: 'height' | 'coolSetpoint' | 'heatSetpoint' | 'rp' | 'ra' | 'ez') => ({ kind: 'number' as const, set: (v: string | number) => ({ [k]: Number(v) }) });
@@ -367,7 +368,7 @@ export const COLUMNS: Column[] = [
   { id: 'ez', label: 'Ez', group: 'Ventilation', get: r => r.ez, dec: 2, edit: num('ez') },
   { id: 'vbz', label: 'Vbz (cfm)', group: 'Ventilation', get: (_r, m) => m.vbz, dec: 0, sum: true },
   { id: 'reqOA', label: 'Required OA (cfm)', group: 'Ventilation', get: (_r, m) => m.voz, dec: 0, sum: true },
-  { id: 'provOA', label: 'Provided OA (cfm)', group: 'Ventilation', get: (_r, m) => m.oa, dec: 0, sum: true, flag: (_r, m) => m.oaShort },
+  { id: 'provOA', label: 'Provided OA (cfm)', group: 'Ventilation', get: (_r, m) => m.oa, dec: 0, sum: true, flag: (_r, m) => m.oaShort, perEquip: true },
   { id: 'oaMargin', label: 'OA Margin (cfm)', group: 'Ventilation', get: (_r, m) => m.voz === null ? null : m.oa - m.voz, dec: 0, sum: true, flag: (_r, m) => m.oaShort },
   { id: 'oaPerPerson', label: 'Provided OA cfm/person', group: 'Ventilation', get: (_r, m) => m.occupants ? m.oa / m.occupants : null },
   // Loads
@@ -385,25 +386,29 @@ export const COLUMNS: Column[] = [
   { id: 'airStreams', label: 'Air Streams', group: 'Loads', get: r => (r.airLoads ?? []).map(a => `${a.name}: ${tidy(a.cfm)} cfm @ ${tidy(a.temp)} °F`).join('; ') || null },
   { id: 'loadBreakdown', label: 'Load Breakdown', group: 'Loads', get: r => r.loads.map(l => l.libId ? `${l.name} ×${tidy(l.qty ?? 1)}` : `${l.name}: ${tidy(l.value)} ${l.unit}`).join('; ') || null },
   // Mechanical equipment
-  { id: 'equipment', label: 'Equipment', group: 'Mechanical Equipment', get: r => r.equipment.map(e => e.tag || e.type).join(', ') || null },
-  { id: 'equipCount', label: 'Units', group: 'Mechanical Equipment', get: r => r.equipment.length, dec: 0, sum: true },
-  { id: 'primaryAir', label: 'Primary Air (cfm)', group: 'Mechanical Equipment', get: (_r, m) => m.primaryAir, dec: 0, sum: true },
-  { id: 'primaryAirMin', label: 'Primary Air Min (cfm)', group: 'Mechanical Equipment', get: (_r, m) => m.primaryAirMin, dec: 0, sum: true },
-  { id: 'unitAir', label: 'Fan Coil / Unit Air (cfm)', group: 'Mechanical Equipment', get: (_r, m) => m.unitAir, dec: 0, sum: true },
-  { id: 'oaDiffAir', label: 'OA Diffuser Air (cfm)', group: 'Mechanical Equipment', get: (_r, m) => m.oaDiffAir, dec: 0, sum: true },
-  { id: 'supply', label: 'Total Supply (cfm)', group: 'Mechanical Equipment', get: (_r, m) => m.supply, dec: 0, sum: true },
+  { id: 'equipment', label: 'Equipment', group: 'Mechanical Equipment', get: r => r.equipment.map(e => e.tag || e.type).join(', ') || null, perEquip: true },
+  { id: 'equipType', label: 'Unit Type', group: 'Mechanical Equipment', get: r => r.equipment.map(e => e.type).join(', ') || null, perEquip: true },
+  { id: 'coolLatCol', label: 'Cooling LAT (°F)', group: 'Mechanical Equipment', get: r => r.equipment.filter(e => e.method !== 'capacity' && e.cools).map(e => tidy(e.coolLat)).join(', ') || null, perEquip: true },
+  { id: 'heatLatCol', label: 'Heating LAT (°F)', group: 'Mechanical Equipment', get: r => r.equipment.filter(e => e.method === 'air' && e.heats).map(e => tidy(e.heatLat)).join(', ') || null, perEquip: true },
+  { id: 'oaPctCol', label: 'Unit OA (%)', group: 'Mechanical Equipment', get: r => r.equipment.filter(e => e.method === 'air').map(e => tidy(e.oaPct)).join(', ') || null, perEquip: true },
+  { id: 'equipCount', label: 'Units', group: 'Mechanical Equipment', get: r => r.equipment.length, dec: 0, sum: true, perEquip: true },
+  { id: 'primaryAir', label: 'Primary Air (cfm)', group: 'Mechanical Equipment', get: (_r, m) => m.primaryAir, dec: 0, sum: true, perEquip: true },
+  { id: 'primaryAirMin', label: 'Primary Air Min (cfm)', group: 'Mechanical Equipment', get: (_r, m) => m.primaryAirMin, dec: 0, sum: true, perEquip: true },
+  { id: 'unitAir', label: 'Fan Coil / Unit Air (cfm)', group: 'Mechanical Equipment', get: (_r, m) => m.unitAir, dec: 0, sum: true, perEquip: true },
+  { id: 'oaDiffAir', label: 'OA Diffuser Air (cfm)', group: 'Mechanical Equipment', get: (_r, m) => m.oaDiffAir, dec: 0, sum: true, perEquip: true },
+  { id: 'supply', label: 'Total Supply (cfm)', group: 'Mechanical Equipment', get: (_r, m) => m.supply, dec: 0, sum: true, perEquip: true },
   { id: 'supplySF', label: 'Supply cfm/SF', group: 'Mechanical Equipment', get: (_r, m) => perSF(m.supply, m.area), dec: 2 },
   { id: 'achSupply', label: 'ACH Supply', group: 'Mechanical Equipment', get: (_r, m) => m.achSupply },
   { id: 'coolLoad', label: 'Cooling Load (BTU/h)', group: 'Mechanical Equipment', get: (_r, m) => m.coolingLoad, dec: 0, sum: true },
-  { id: 'coolCap', label: 'Cooling Capacity (BTU/h)', group: 'Mechanical Equipment', get: (_r, m) => m.coolCap, dec: 0, sum: true, flag: (_r, m) => m.coolingShort },
+  { id: 'coolCap', label: 'Cooling Capacity (BTU/h)', group: 'Mechanical Equipment', get: (_r, m) => m.coolCap, dec: 0, sum: true, flag: (_r, m) => m.coolingShort, perEquip: true },
   { id: 'coolMargin', label: 'Cooling Margin (BTU/h)', group: 'Mechanical Equipment', get: (_r, m) => m.coolingLoad === null ? null : m.coolCap - m.coolingLoad, dec: 0, sum: true, flag: (_r, m) => m.coolingShort },
-  { id: 'coolTons', label: 'Cooling Capacity (tons)', group: 'Mechanical Equipment', get: (_r, m) => m.coolCap / 12000, dec: 2, sum: true },
-  { id: 'equipCfm', label: 'Cooling cfm', group: 'Mechanical Equipment', get: (_r, m) => m.equipCoolCfm, dec: 0, sum: true, flag: (_r, m) => m.coolingShort },
+  { id: 'coolTons', label: 'Cooling Capacity (tons)', group: 'Mechanical Equipment', get: (_r, m) => m.coolCap / 12000, dec: 2, sum: true, perEquip: true },
+  { id: 'equipCfm', label: 'Cooling cfm', group: 'Mechanical Equipment', get: (_r, m) => m.equipCoolCfm, dec: 0, sum: true, flag: (_r, m) => m.coolingShort, perEquip: true },
   { id: 'cfmNeeded', label: 'Cooling cfm Required', group: 'Mechanical Equipment', get: (_r, m) => m.cfmNeeded, dec: 0, sum: true },
   { id: 'heatLoad', label: 'Heating Load (BTU/h)', group: 'Mechanical Equipment', get: (_r, m) => m.heatingLoad, dec: 0, sum: true },
-  { id: 'heatCap', label: 'Heating Capacity (BTU/h)', group: 'Mechanical Equipment', get: (_r, m) => m.heatCap, dec: 0, sum: true, flag: (_r, m) => m.heatingShort },
+  { id: 'heatCap', label: 'Heating Capacity (BTU/h)', group: 'Mechanical Equipment', get: (_r, m) => m.heatCap, dec: 0, sum: true, flag: (_r, m) => m.heatingShort, perEquip: true },
   { id: 'heatMargin', label: 'Heating Margin (BTU/h)', group: 'Mechanical Equipment', get: (_r, m) => m.heatingLoad === null ? null : m.heatCap - m.heatingLoad, dec: 0, sum: true, flag: (_r, m) => m.heatingShort },
-  { id: 'coil', label: 'Heating Coil (MBH)', group: 'Mechanical Equipment', get: (_r, m) => m.coilTotal / 1000, dec: 1, sum: true },
+  { id: 'coil', label: 'Heating Coil (MBH)', group: 'Mechanical Equipment', get: (_r, m) => m.coilTotal / 1000, dec: 1, sum: true, perEquip: true },
   // Plumbing
   { id: 'fixtures', label: 'Fixtures', group: 'Plumbing', get: (_r, m) => m.plumbing.list || null },
   { id: 'fixtureCount', label: 'Fixture Count', group: 'Plumbing', get: (_r, m) => m.plumbing.count, dec: 0, sum: true },
@@ -411,14 +416,15 @@ export const COLUMNS: Column[] = [
   { id: 'wsfuHot', label: 'Hot WSFU', group: 'Plumbing', get: (_r, m) => m.plumbing.hot, dec: 2, sum: true },
   { id: 'wsfu', label: 'Total WSFU', group: 'Plumbing', get: (_r, m) => m.plumbing.wsfu, dec: 2, sum: true },
   { id: 'dfu', label: 'DFU', group: 'Plumbing', get: (_r, m) => m.plumbing.dfu, dec: 1, sum: true },
-  { id: 'coilKw', label: 'Heating Coil (kW)', group: 'Mechanical Equipment', get: (_r, m) => m.coilTotal / BTUH_PER_W / 1000, dec: 1, sum: true },
+  { id: 'coilKw', label: 'Heating Coil (kW)', group: 'Mechanical Equipment', get: (_r, m) => m.coilTotal / BTUH_PER_W / 1000, dec: 1, sum: true, perEquip: true },
 ];
 export const COLUMN_BY_ID = new Map(COLUMNS.map(c => [c.id, c]));
 
-export type ReportTemplate = { id: string; name: string; columns: string[]; builtin?: boolean };
+export type ReportTemplate = { id: string; name: string; columns: string[]; builtin?: boolean; byEquip?: boolean }; // byEquip: one row per unit
 export const BUILTIN_REPORTS: ReportTemplate[] = [
   { id: 'ventilation', name: 'Ventilation', builtin: true, columns: ['name', 'area', 'height', 'volume', 'people', 'rp', 'ra', 'reqOA', 'provOA', 'oaMargin', 'primaryAir', 'achSupply'] },
   { id: 'hvac', name: 'Mechanical Equipment', builtin: true, columns: ['name', 'area', 'equipment', 'primaryAir', 'primaryAirMin', 'unitAir', 'oaDiffAir', 'coolLoad', 'coolCap', 'heatLoad', 'heatCap', 'coil'] },
+  { id: 'equipsched', name: 'Equipment Schedule', builtin: true, byEquip: true, columns: ['name', 'equipment', 'equipType', 'supply', 'primaryAirMin', 'oaPctCol', 'coolLatCol', 'coolCap', 'heatLatCol', 'heatCap', 'coil'] },
   { id: 'loads', name: 'Loads', builtin: true, columns: ['name', 'area', 'lightWSF', 'lightW', 'equipWSF', 'equipW', 'otherW', 'loadW', 'loadDensity', 'peopleBtu', 'envLoad', 'airLoad', 'coolLoad'] },
   { id: 'plumbing', name: 'Plumbing Fixture Units', builtin: true, columns: ['name', 'area', 'fixtures', 'fixtureCount', 'wsfuCold', 'wsfuHot', 'wsfu', 'dfu'] },
   { id: 'schedule', name: 'Room Schedule', builtin: true, columns: ['name', 'template', 'gross', 'cutouts', 'area', 'perimeter', 'height', 'volume'] },

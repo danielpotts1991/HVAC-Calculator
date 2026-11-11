@@ -395,3 +395,12 @@
 .hvac-air-adds strong{color:#b91c1c}
 .hvac-load-total{margin-top:10px;padding:6px 10px;border:1px solid #e2e8f0;border-radius:8px;background:#f8fafc}
 .hvac-load-total .hvac-row{padding:3px 0}
+/* Reports: rows per room / per unit */
+.hvac-seg{display:inline-flex;align-items:center;gap:2px;margin-right:4px}
+.hvac-seg .hvac-muted{margin-right:4px}
+.hvac-seg button{border:1px solid #cbd5e1;background:white;padding:4px 10px;font-size:12px;font-weight:600;color:#475569;cursor:pointer}
+.hvac-seg button:first-of-type{border-radius:6px 0 0 6px}
+.hvac-seg button:last-of-type{border-radius:0 6px 6px 0;margin-left:-1px}
+.hvac-seg button.on{background:#1d4ed8;border-color:#1d4ed8;color:white}
+.hvac-report-table td.span{vertical-align:top;background:#fbfcfe}
+.hvac-report-table tr.grp-cont td{border-top-color:#eef2f7}
